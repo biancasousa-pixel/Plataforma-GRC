@@ -1,0 +1,3866 @@
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import {
+  LayoutDashboard,
+  Workflow,
+  ClipboardList,
+  GraduationCap,
+  Megaphone,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  Search,
+  Bell,
+  X,
+  Plus,
+  History,
+  Paperclip,
+  MessageSquare,
+  AlertTriangle,
+  Check,
+  RotateCcw,
+  ShieldCheck,
+  ArrowUpRight,
+  ArrowDownRight,
+  Trash2,
+  Users,
+  BookOpen,
+  Link2,
+  ShieldAlert,
+} from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
+
+/* ============================================================================
+   OSKLEN · PLATAFORMA DE GRC — PROGRAMA DE INTEGRIDADE 2.0
+   Protótipo funcional de frente — persistência real via window.storage
+   (escopo compartilhado: todo o comitê que abrir este artifact vê e edita
+   os mesmos dados). Os dados de exemplo abaixo vêm da Matriz de Controle,
+   do Relatório IBGC e do deck do Programa 2.0 reais da Osklen.
+
+   Este é o canal de integridade de fato: o módulo "Canal de Denúncias"
+   acompanha caso a caso, com prazo de resposta (SLA) configurável por
+   categoria que recalcula sozinho — ver Osklen_GRC_Schema.sql, view
+   vw_casos_sla, testada com dados reais antes desta entrega.
+   ============================================================================ */
+
+/* ---------------------------- vocabulário ---------------------------- */
+
+const AREAS = [
+  "GRC",
+  "Jurídico",
+  "Financeiro",
+  "RH",
+  "Compras",
+  "Qualidade",
+  "Administrativo",
+  "TI",
+  "Diretoria",
+  "Conselho",
+];
+
+const TIPOS_DOCUMENTO = [
+  { atual: "Diretriz", anterior: "Política" },
+  { atual: "Norma Interna", anterior: "Política (interna)" },
+  { atual: "Manual", anterior: null },
+  { atual: "Cartilha", anterior: null },
+  { atual: "Código", anterior: null },
+  { atual: "POP/IT", anterior: null },
+];
+
+const PILARES = [
+  { numero: 1, nome: "Ética e Conduta", descricao: "Código de Ética (colaboradores/fornecedores) e Canal de Denúncias." },
+  { numero: 2, nome: "Diretrizes Corporativas", descricao: "Mídias sociais, privacidade, normas financeiras e de compras." },
+  { numero: 3, nome: "Manuais e Cartilhas", descricao: "Manual de Governança e cartilhas de sustentabilidade e integridade." },
+  { numero: 4, nome: "Treinamento e Evidência", descricao: "Integração, reciclagem anual, assinatura digital, KPIs." },
+];
+
+const FASES_METODOLOGICAS = ["Estudo", "Implementação", "Monitoramento", "Auditoria"];
+
+const STATUS_COLUNAS = ["Não iniciado", "Em andamento", "Em revisão", "Aprovado"];
+
+const FIELD_LABELS = {
+  nome: "Nome",
+  status: "Status",
+  prioridade: "Prioridade",
+  risco: "Classificação de risco",
+  dataProximaRevisao: "Próxima revisão",
+  responsaveis: "Responsáveis",
+  acaoRecomendada: "Ação recomendada",
+  observacoes: "Observações",
+  area: "Área",
+  versao: "Versão",
+};
+
+const ROLES = ["Admin/Comitê GRC", "Operador de Área", "Colaborador Geral"];
+
+/* ----------------------- vocabulário · colaboradores ----------------------- */
+
+const STATUS_COLABORADOR = ["Ativo", "Inativo"];
+
+const TIPOS_ADVERTENCIA = ["Verbal", "Escrita", "Suspensão", "Desligamento", "Outro"];
+
+const STATUS_DESIGNACAO = ["Pendente", "Concluído", "Atrasado", "Dispensado"];
+
+const CICLOS_REVISAO_MESES = [6, 12, 24, 36];
+
+/* ----------------------- vocabulário · canal de denúncias ----------------------- */
+
+const CANAIS_ORIGEM = [
+  "Canal de Denúncias (hotline)",
+  "E-mail",
+  "Presencial/Ombudsman",
+  "Auditoria interna",
+  "Gestor direto",
+  "Outro",
+];
+
+const CATEGORIAS_CASO = [
+  "Conduta",
+  "Assédio moral",
+  "Assédio sexual",
+  "Conflito de interesse",
+  "Fraude/Corrupção",
+  "Discriminação",
+  "Saúde e segurança",
+  "Outros",
+];
+
+const DEFAULT_SLA_DIAS = {
+  Conduta: 30,
+  "Assédio moral": 20,
+  "Assédio sexual": 15,
+  "Conflito de interesse": 30,
+  "Fraude/Corrupção": 30,
+  Discriminação: 20,
+  "Saúde e segurança": 15,
+  Outros: 30,
+};
+
+const GRAVIDADES = ["Baixa", "Média", "Alta", "Crítica"];
+
+const STATUS_CASOS = ["Recebida", "Em triagem", "Em investigação", "Concluída", "Arquivada"];
+
+const DESFECHOS_CASO = ["Procedente", "Improcedente", "Procedente parcial", "Inconclusivo"];
+
+const FIELD_LABELS_CASO = {
+  status: "Status",
+  gravidade: "Gravidade",
+  responsavelInvestigacao: "Responsável pela investigação",
+  desfecho: "Desfecho",
+  dataConclusao: "Data de conclusão",
+  denuncianteAnonimo: "Denunciante anônimo",
+  sigilo: "Sigilo",
+};
+
+/* ------------------------------ utilidades ------------------------------ */
+
+let uidSeq = 0;
+function uid(prefixo) {
+  uidSeq += 1;
+  return `${prefixo}-${Date.now().toString(36)}-${uidSeq}`;
+}
+
+function iso(diasOffset = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + diasOffset);
+  return d.toISOString();
+}
+
+function formatarData(valor) {
+  if (!valor) return "—";
+  const d = new Date(valor);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("pt-BR");
+}
+
+function tempoRelativo(valorIso) {
+  if (!valorIso) return "—";
+  const diffMs = Date.now() - new Date(valorIso).getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `há ${d}d`;
+  const mo = Math.floor(d / 30);
+  return `há ${mo} ${mo > 1 ? "meses" : "mês"}`;
+}
+
+function diasAte(dataStr) {
+  if (!dataStr) return null;
+  const alvo = new Date(dataStr);
+  const hoje = new Date();
+  alvo.setHours(0, 0, 0, 0);
+  hoje.setHours(0, 0, 0, 0);
+  return Math.round((alvo - hoje) / 86400000);
+}
+
+function calcularPrazoCaso(caso, slaConfig) {
+  const regra = slaConfig.find((s) => s.categoria === caso.categoria);
+  const dias = regra ? regra.prazoDias : 30;
+  const d = new Date(caso.dataRecebimento);
+  d.setDate(d.getDate() + dias);
+  return d.toISOString();
+}
+
+function calcularProximaRevisao(dataUltimaRevisao, cicloMeses) {
+  if (!dataUltimaRevisao || !cicloMeses) return null;
+  const d = new Date(dataUltimaRevisao);
+  d.setMonth(d.getMonth() + Number(cicloMeses));
+  return d.toISOString();
+}
+
+function diasDesde(dataStr) {
+  if (!dataStr) return null;
+  return -diasAte(dataStr);
+}
+
+function estagioFromPontuacao(p) {
+  if (p <= 20) return "Embrionário";
+  if (p <= 40) return "Inicial";
+  if (p <= 60) return "Básico";
+  if (p <= 80) return "Sólido";
+  return "Avançado";
+}
+
+function toneFromEstagio(estagio) {
+  if (estagio === "Embrionário" || estagio === "Inicial") return "red";
+  if (estagio === "Básico") return "amber";
+  return "green";
+}
+
+const HEX_TONE = { green: "#10b981", amber: "#d97706", red: "#dc2626", neutral: "#a8a29e", graphite: "#1c1917" };
+
+function classNames(...itens) {
+  return itens.filter(Boolean).join(" ");
+}
+
+function formatarValorAuditoria(campo, valor) {
+  if (valor === null || valor === undefined || valor === "") return "(vazio)";
+  if (typeof valor === "boolean") return valor ? "sim" : "não";
+  if (Array.isArray(valor)) return valor.length ? valor.join(", ") : "(vazio)";
+  if (campo === "dataProximaRevisao" || campo === "dataConclusao") return formatarData(valor);
+  return String(valor);
+}
+
+function riscoTone(risco) {
+  if (risco === "Alto") return "red";
+  if (risco === "Médio") return "amber";
+  if (risco === "Baixo") return "green";
+  return "neutral";
+}
+
+function gravidadeTone(gravidade) {
+  if (gravidade === "Crítica" || gravidade === "Alta") return "red";
+  if (gravidade === "Média") return "amber";
+  return "green";
+}
+
+/* ------------------------------ persistência ------------------------------ */
+
+const STORAGE = {
+  documentos: "osklen-grc-documentos-v1",
+  auditLog: "osklen-grc-audit-log-v1",
+  ibgcRounds: "osklen-grc-ibgc-rounds-v1",
+  treinamentos: "osklen-grc-treinamentos-v1",
+  treinamentoDesignacoes: "osklen-grc-treinamento-designacoes-v1",
+  featureFlags: "osklen-grc-feature-flags-v1",
+  casos: "osklen-grc-casos-v1",
+  slaConfig: "osklen-grc-sla-config-v1",
+  colaboradores: "osklen-grc-colaboradores-v1",
+  advertencias: "osklen-grc-advertencias-v1",
+  configuracoes: "osklen-grc-configuracoes-v1",
+};
+
+async function storageGet(key, shared) {
+  try {
+    const res = await window.storage.get(key, shared);
+    return res ? JSON.parse(res.value) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function storageSet(key, value, shared) {
+  try {
+    await window.storage.set(key, JSON.stringify(value), shared);
+  } catch (e) {
+    /* silencioso — protótipo segue funcionando em memória mesmo se a
+       gravação falhar momentaneamente */
+  }
+}
+
+/* -------------------------------- seeds -------------------------------- */
+
+function seedDocumentos() {
+  const base = [
+    {
+      nome: "Código de Ética — Colaboradores",
+      tipo: "Código",
+      classificacao: "Governança",
+      area: "GRC",
+      pilar: "Ética e Conduta",
+      status: "Em revisão",
+      prioridade: "Alta",
+      risco: "Alto",
+      versao: "v2",
+      dataProximaRevisao: null,
+      responsaveis: ["Henrique Marcondes", "Bia Fernandes"],
+      acaoRecomendada: "Revisar",
+      observacoes: "Versão 2; aguardar datas para consolidar ciclo de revisão.",
+    },
+    {
+      nome: "Código de Ética — Fornecedores",
+      tipo: "Código",
+      classificacao: "Governança",
+      area: "Qualidade",
+      pilar: "Ética e Conduta",
+      status: "Em revisão",
+      prioridade: "Alta",
+      risco: "Alto",
+      versao: "v2",
+      dataProximaRevisao: null,
+      responsaveis: [],
+      acaoRecomendada: "Revisar",
+      observacoes: "Versão 2; aguardar datas para consolidar ciclo de revisão.",
+    },
+    {
+      nome: "Diretriz de Uso de Redes Sociais",
+      tipo: "Diretriz",
+      classificacao: "Tático",
+      area: "Jurídico",
+      pilar: "Diretrizes Corporativas",
+      status: "Em revisão",
+      prioridade: "Alta",
+      risco: "Médio",
+      versao: "v1",
+      dataProximaRevisao: null,
+      responsaveis: [],
+      acaoRecomendada: "Revisar",
+      observacoes: "Versão 1; revisar aderência a práticas atuais.",
+    },
+    {
+      nome: "Manual de Governança",
+      tipo: "Manual",
+      classificacao: "Governança",
+      area: "Jurídico",
+      pilar: "Manuais e Cartilhas",
+      status: "Em andamento",
+      prioridade: "Alta",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: [],
+      acaoRecomendada: null,
+      observacoes: "Aguardando datas para priorização formal.",
+    },
+    {
+      nome: "POP / IT de Processos de RH",
+      tipo: "POP/IT",
+      classificacao: "Operacional",
+      area: "RH",
+      pilar: "Diretrizes Corporativas",
+      status: "Em andamento",
+      prioridade: "Média",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: "2026-07-31",
+      responsaveis: ["Josiane Muguet", "Bia Fernandes"],
+      acaoRecomendada: null,
+      observacoes: "",
+    },
+    {
+      nome: "Norma Interna de Viagens",
+      tipo: "Norma Interna",
+      classificacao: "Governança",
+      area: "Administrativo",
+      pilar: "Diretrizes Corporativas",
+      status: "Em andamento",
+      prioridade: "Baixa",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: ["GRC"],
+      acaoRecomendada: null,
+      observacoes: "Pendente avaliação dos pontos de melhoria apontados pelo grupo.",
+    },
+    {
+      nome: "Norma Interna de Pagamentos",
+      tipo: "Norma Interna",
+      classificacao: "Governança",
+      area: "Financeiro",
+      pilar: "Diretrizes Corporativas",
+      status: "Em revisão",
+      prioridade: "Média",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: ["Financeiro"],
+      acaoRecomendada: null,
+      observacoes: "Aguardando data de criação e última revisão.",
+    },
+    {
+      nome: "Norma Interna de Cobrança",
+      tipo: "Norma Interna",
+      classificacao: "Tático",
+      area: "Financeiro",
+      pilar: "Diretrizes Corporativas",
+      status: "Em revisão",
+      prioridade: "Alta",
+      risco: "Alto",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: ["Financeiro"],
+      acaoRecomendada: null,
+      observacoes: "Aguardando data de criação e última revisão.",
+    },
+    {
+      nome: "Norma Interna de Reembolso",
+      tipo: "Norma Interna",
+      classificacao: "Governança",
+      area: "Financeiro",
+      pilar: "Diretrizes Corporativas",
+      status: "Em revisão",
+      prioridade: "Baixa",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: ["Financeiro"],
+      acaoRecomendada: null,
+      observacoes: "Aguardando data de criação e última revisão.",
+    },
+    {
+      nome: "Norma Interna de Cotação e Compras",
+      tipo: "Norma Interna",
+      classificacao: "Tático",
+      area: "Compras",
+      pilar: "Diretrizes Corporativas",
+      status: "Não iniciado",
+      prioridade: "Média",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: [],
+      acaoRecomendada: null,
+      observacoes: "Único documento de alta relevância operacional ainda não iniciado.",
+    },
+    {
+      nome: "Diretriz de Venda ao Funcionário",
+      tipo: "Diretriz",
+      classificacao: "Governança",
+      area: "GRC",
+      pilar: "Diretrizes Corporativas",
+      status: "Em revisão",
+      prioridade: "Média",
+      risco: "Médio",
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: ["GRC"],
+      acaoRecomendada: null,
+      observacoes: "Pendente de revisão do GRC.",
+    },
+  ];
+
+  return base.map((d, idx) => ({
+    id: uid("doc"),
+    linkDocumento: null,
+    anexos: [],
+    comentarios: [],
+    documentosRelacionados: [],
+    dataUltimaRevisao: d.nome === "Norma Interna de Viagens" ? "2025-09-03" : null,
+    cicloRevisaoMeses: 24,
+    criadoEm: iso(-(40 - idx)),
+    atualizadoEm: iso(-(40 - idx)),
+    ...d,
+  }));
+}
+
+function seedAuditLog(documentos) {
+  const eventos = [
+    { offset: -2 / 24, doc: documentos[0], campo: "status", de: "Em andamento", para: "Em revisão", usuario: "Henrique Marcondes" },
+    { offset: -5 / 24, doc: documentos[6], campo: "status", de: "Em andamento", para: "Em revisão", usuario: "Bia Fernandes" },
+    { offset: -1, doc: documentos[3], campo: "observacoes", de: "", para: "Aguardando datas para priorização formal.", usuario: "Henrique Marcondes" },
+    { offset: -3, doc: documentos[4], campo: "dataProximaRevisao", de: null, para: "2026-07-31", usuario: "Josiane Muguet" },
+  ];
+  return eventos.map((e) => ({
+    id: uid("log"),
+    documentoId: e.doc.id,
+    documentoNome: e.doc.nome,
+    campo: e.campo,
+    valorAntigo: e.de,
+    valorNovo: e.para,
+    usuario: e.usuario,
+    papel: "Operador de Área",
+    timestamp: iso(e.offset),
+  }));
+}
+
+function seedIbgcRounds() {
+  return [
+    {
+      id: uid("rodada"),
+      data: "2026-06-01",
+      consolidado: 56,
+      socios: 58,
+      conselho: 72,
+      diretoria: 44,
+      fiscalizacao: 23,
+      conduta: 68,
+      estagio: "Básico",
+    },
+  ];
+}
+
+function seedTreinamentos() {
+  return [
+    {
+      id: uid("trein"),
+      nome: "Integração (Onboarding)",
+      tipo: "Integração (Onboarding)",
+      frequencia: "A cada novo colaborador",
+      duracao: "4 horas",
+      formato: "EAD + plataforma",
+      conteudo: "Valores da marca, Código de Ética, Canal de Denúncias, Cartilha de Integridade, Diretrizes principais.",
+      evidencia: "Assinatura digital + teste com aprovação mínima de 70%",
+      fonteExterna: null,
+    },
+    {
+      id: uid("trein"),
+      nome: "Reciclagem Anual",
+      tipo: "Reciclagem Anual",
+      frequencia: "1x/ano — todos os colaboradores",
+      duracao: "2 horas",
+      formato: "Plataforma",
+      conteudo: "Atualização de normas, revisão de casos práticos, privacidade.",
+      evidencia: "Assinatura digital + teste com aprovação mínima de 70%",
+      fonteExterna: null,
+    },
+    {
+      id: uid("trein"),
+      nome: "Treinamento por Função",
+      tipo: "Treinamento por Função",
+      frequencia: "Conforme admissão ou mudança de cargo",
+      duracao: "2–4 horas",
+      formato: "Presencial por área / workshop",
+      conteudo: "Due diligence de fornecedores, privacidade de dados, gestão de risco.",
+      evidencia: "Lista de presença + avaliação de aprendizagem",
+      fonteExterna: null,
+    },
+    {
+      id: uid("trein"),
+      nome: "Comunicados e Campanhas",
+      tipo: "Comunicado/Campanha",
+      frequencia: "Trimestral / por evento",
+      duracao: "15–30 min",
+      formato: "E-mail / intranet / cartazes",
+      conteudo: "Lembretes de boas práticas, datas comemorativas, casos de conduta.",
+      evidencia: "Registro de comunicação / taxa de abertura",
+      fonteExterna: null,
+    },
+  ];
+}
+
+function seedTreinamentoDesignacoes() {
+  // Nasce vazio — designações reais entram conforme colaboradores são
+  // cadastrados (cadastro manual, por decisão de vocês).
+  return [];
+}
+
+function seedColaboradores() {
+  return [];
+}
+
+function seedAdvertencias() {
+  return [];
+}
+
+function seedConfiguracoes() {
+  return { totalColaboradoresAtivos: 0 };
+}
+
+function seedFeatureFlags() {
+  return [
+    { recurso: "dashboard", modulo: "Dashboard Central", restricaoAtiva: false },
+    { recurso: "fluxos", modulo: "Central de Fluxos e Processos", restricaoAtiva: false },
+    { recurso: "matriz", modulo: "Matriz de Controle", restricaoAtiva: false },
+    { recurso: "treinamentos", modulo: "Hub de Treinamentos e Cultura", restricaoAtiva: false },
+    { recurso: "denuncias", modulo: "Canal de Denúncias", restricaoAtiva: false },
+    { recurso: "admin", modulo: "Administração", restricaoAtiva: false },
+  ];
+}
+
+function seedSlaConfig() {
+  return CATEGORIAS_CASO.map((c) => ({ categoria: c, prazoDias: DEFAULT_SLA_DIAS[c] || 30 }));
+}
+
+function seedCasos() {
+  // Nasce vazio de propósito: dados de caso de integridade são sensíveis,
+  // então este protótipo não inventa relatos de exemplo — o comitê
+  // registra os casos reais a partir daqui.
+  return [];
+}
+
+/* ------------------------------ átomos de UI ------------------------------ */
+
+function Dot({ tone = "neutral" }) {
+  const map = { green: "bg-emerald-500", amber: "bg-amber-500", red: "bg-red-500", neutral: "bg-stone-300" };
+  return <span className={classNames("inline-block h-2 w-2 shrink-0 rounded-full", map[tone])} />;
+}
+
+function Tag({ children, tone = "neutral" }) {
+  const map = {
+    neutral: "bg-stone-100 text-stone-600",
+    graphite: "bg-stone-800 text-white",
+    green: "bg-emerald-50 text-emerald-700",
+    amber: "bg-amber-50 text-amber-700",
+    red: "bg-red-50 text-red-700",
+  };
+  return (
+    <span className={classNames("inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium", map[tone])}>
+      {children}
+    </span>
+  );
+}
+
+function Avatares({ nomes }) {
+  if (!nomes || nomes.length === 0) {
+    return <span className="text-xs text-stone-400">Sem responsável</span>;
+  }
+  return (
+    <div className="flex -space-x-2">
+      {nomes.slice(0, 3).map((nome, i) => (
+        <span
+          key={i}
+          title={nome}
+          className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-stone-800 text-[10px] font-semibold text-white"
+        >
+          {nome
+            .split(" ")
+            .map((p) => p[0])
+            .slice(0, 2)
+            .join("")
+            .toUpperCase()}
+        </span>
+      ))}
+      {nomes.length > 3 && (
+        <span className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-stone-200 text-[10px] font-semibold text-stone-600">
+          +{nomes.length - 3}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function KpiCard({ label, valor, sublabel, tone, tendencia }) {
+  return (
+    <div className="rounded-xl border border-stone-200 bg-white p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-stone-400">{label}</p>
+      <div className="mt-2 flex items-end gap-2">
+        <span className="text-2xl font-semibold tabular-nums text-stone-900">{valor}</span>
+        <Dot tone={tone} />
+        {tendencia !== undefined && tendencia !== null && (
+          <span
+            className={classNames(
+              "mb-0.5 flex items-center text-xs font-medium",
+              tendencia > 0 ? "text-emerald-600" : tendencia < 0 ? "text-red-600" : "text-stone-400"
+            )}
+          >
+            {tendencia > 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : tendencia < 0 ? <ArrowDownRight className="h-3.5 w-3.5" /> : null}
+            {tendencia !== 0 ? Math.abs(tendencia) : ""}
+          </span>
+        )}
+      </div>
+      {sublabel && <p className="mt-1 text-xs text-stone-500">{sublabel}</p>}
+    </div>
+  );
+}
+
+function Modal({ titulo, onClose, children, largura = "max-w-lg" }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
+      <div className={classNames("max-h-[85vh] w-full overflow-y-auto rounded-2xl bg-white shadow-xl", largura)}>
+        <div className="flex items-center justify-between border-b border-stone-200 px-5 py-4">
+          <h3 className="text-sm font-semibold text-stone-900">{titulo}</h3>
+          <button onClick={onClose} className="rounded-full p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Campo({ label, children }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-stone-500">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const inputCls =
+  "w-full rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-900 outline-none focus:border-stone-500 focus:ring-1 focus:ring-stone-500";
+
+function ListaContagem({ titulo, dados }) {
+  const max = Math.max(1, ...dados.map((d) => d.total));
+  const algum = dados.some((d) => d.total > 0);
+  return (
+    <div className="rounded-xl border border-stone-200 bg-white p-5">
+      <h2 className="mb-3 text-sm font-semibold text-stone-800">{titulo}</h2>
+      {!algum && <p className="text-xs text-stone-400">Nenhum dado ainda.</p>}
+      {algum && (
+        <div className="space-y-2">
+          {dados.map((d) => (
+            <div key={d.rotulo}>
+              <div className="mb-0.5 flex items-center justify-between text-xs">
+                <span className="text-stone-600">{d.rotulo}</span>
+                <span className="font-medium text-stone-800">{d.total}</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+                <div className="h-full bg-stone-700" style={{ width: `${(d.total / max) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function painelContagem(itens, campo, opcoes) {
+  const contagem = {};
+  opcoes.forEach((o) => (contagem[o] = 0));
+  itens.forEach((it) => {
+    if (contagem[it[campo]] !== undefined) contagem[it[campo]] += 1;
+  });
+  return opcoes.map((o) => ({ rotulo: o, total: contagem[o] || 0 }));
+}
+
+/* -------------------------------- sidebar -------------------------------- */
+
+const NAV_ITENS = [
+  { chave: "dashboard", rotulo: "Início", icone: LayoutDashboard },
+  { chave: "fluxos", rotulo: "Fluxos e Processos", icone: Workflow },
+  { chave: "matriz", rotulo: "Matriz de Controle", icone: ClipboardList },
+  { chave: "biblioteca", rotulo: "Biblioteca Corporativa", icone: BookOpen },
+  { chave: "colaboradores", rotulo: "Colaboradores", icone: Users },
+  { chave: "treinamentos", rotulo: "Treinamentos e Cultura", icone: GraduationCap },
+];
+
+const NAV_ITENS_SECUNDARIOS = [
+  { chave: "denuncias", rotulo: "Canal de Denúncias", icone: Megaphone },
+  { chave: "admin", rotulo: "Administração", icone: Settings },
+];
+
+function Sidebar({ aberta, setAberta, view, setView }) {
+  return (
+    <aside
+      className={classNames(
+        "flex h-full shrink-0 flex-col border-r border-stone-200 bg-white transition-all duration-200",
+        aberta ? "w-60" : "w-16"
+      )}
+    >
+      <div className="flex h-14 items-center gap-2 border-b border-stone-200 px-4">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-stone-900 text-xs font-bold text-white">
+          O
+        </span>
+        {aberta && <span className="truncate text-sm font-semibold tracking-wide text-stone-900">osklen · grc</span>}
+      </div>
+
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
+        {NAV_ITENS.map((item) => (
+          <ItemNav key={item.chave} item={item} ativo={view === item.chave} aberta={aberta} onClick={() => setView(item.chave)} />
+        ))}
+        <div className="my-2 border-t border-stone-100" />
+        {NAV_ITENS_SECUNDARIOS.map((item) => (
+          <ItemNav key={item.chave} item={item} ativo={view === item.chave} aberta={aberta} onClick={() => setView(item.chave)} />
+        ))}
+      </nav>
+
+      <button
+        onClick={() => setAberta(!aberta)}
+        className="flex items-center gap-2 border-t border-stone-200 px-4 py-3 text-xs font-medium text-stone-500 hover:bg-stone-50"
+      >
+        {aberta ? (
+          <>
+            <ChevronLeft className="h-4 w-4" /> Recolher
+          </>
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+      </button>
+    </aside>
+  );
+}
+
+function ItemNav({ item, ativo, aberta, onClick }) {
+  const Icone = item.icone;
+  return (
+    <button
+      onClick={onClick}
+      title={!aberta ? item.rotulo : undefined}
+      className={classNames(
+        "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        ativo ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
+      )}
+    >
+      <Icone className="h-4 w-4 shrink-0" />
+      {aberta && <span className="truncate">{item.rotulo}</span>}
+    </button>
+  );
+}
+
+/* -------------------------------- topbar -------------------------------- */
+
+function TopBar({ busca, setBusca, view, perfil, setPerfil, notificacoes, onClickNotificacao }) {
+  const [menuPerfilAberto, setMenuPerfilAberto] = useState(false);
+  const [menuNotifAberto, setMenuNotifAberto] = useState(false);
+
+  return (
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-stone-200 bg-white px-5">
+      <div className="flex items-center gap-2 text-sm text-stone-400">
+        <span className="font-medium text-stone-700">Programa de Integridade 2.0</span>
+      </div>
+
+      <div className="flex items-center gap-3">
+        {(view === "matriz" || view === "denuncias" || view === "biblioteca" || view === "colaboradores") && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder={
+                view === "matriz" || view === "biblioteca"
+                  ? "Buscar documento..."
+                  : view === "colaboradores"
+                  ? "Buscar colaborador..."
+                  : "Buscar protocolo ou categoria..."
+              }
+              className="w-56 rounded-lg border border-stone-300 bg-stone-50 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-stone-500 focus:bg-white"
+            />
+          </div>
+        )}
+
+        <div className="relative">
+          <button
+            onClick={() => setMenuNotifAberto((v) => !v)}
+            className="relative rounded-full p-2 text-stone-500 hover:bg-stone-100"
+          >
+            <Bell className="h-4 w-4" />
+            {notificacoes.length > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                {notificacoes.length}
+              </span>
+            )}
+          </button>
+          {menuNotifAberto && (
+            <div className="absolute right-0 z-40 mt-2 w-72 rounded-xl border border-stone-200 bg-white p-2 shadow-lg">
+              <p className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-stone-400">Vencendo em breve</p>
+              {notificacoes.length === 0 && <p className="px-2 py-2 text-xs text-stone-400">Nada vencendo nos próximos 30 dias.</p>}
+              {notificacoes.map((n) => (
+                <button
+                  key={`${n.tipo}-${n.id}`}
+                  onClick={() => {
+                    onClickNotificacao(n);
+                    setMenuNotifAberto(false);
+                  }}
+                  className="block w-full rounded-lg px-2 py-2 text-left text-xs hover:bg-stone-50"
+                >
+                  <p className="font-medium text-stone-800">{n.nome}</p>
+                  <p className="text-stone-400">
+                    {n.contexto} · {n.tipo === "caso" ? "prazo de resposta" : "revisão"} {n.dias < 0 ? `vencido há ${Math.abs(n.dias)}d` : `em ${n.dias}d`}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          <button
+            onClick={() => setMenuPerfilAberto((v) => !v)}
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-stone-100"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-stone-800 text-[10px] font-semibold text-white">
+              {perfil.nome
+                .split(" ")
+                .map((p) => p[0])
+                .slice(0, 2)
+                .join("")
+                .toUpperCase()}
+            </span>
+            <span className="hidden text-left sm:block">
+              <span className="block text-xs font-medium text-stone-800">{perfil.nome}</span>
+              <span className="block text-[10px] text-stone-400">{perfil.papel}</span>
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 text-stone-400" />
+          </button>
+          {menuPerfilAberto && (
+            <div className="absolute right-0 z-40 mt-2 w-64 rounded-xl border border-stone-200 bg-white p-3 shadow-lg">
+              <Campo label="Seu nome (atribuído nas edições)">
+                <input
+                  className={inputCls}
+                  value={perfil.nome}
+                  onChange={(e) => setPerfil({ ...perfil, nome: e.target.value })}
+                />
+              </Campo>
+              <div className="mt-3">
+                <Campo label="Visualizar como (papel RBAC)">
+                  <select
+                    className={inputCls}
+                    value={perfil.papel}
+                    onChange={(e) => setPerfil({ ...perfil, papel: e.target.value })}
+                  >
+                    {ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <p className="mt-2 text-[11px] leading-relaxed text-stone-400">
+                  Fase 1: a trava de visualização está desligada para todos os papéis — este seletor só identifica o
+                  autor nas edições e no log de auditoria.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* -------------------------------- dashboard -------------------------------- */
+
+function Dashboard({ documentos, auditLog, ibgcRounds, treinamentos, treinamentoDesignacoes, colaboradores, configuracoes, casos, slaConfig, setView, abrirDocumento, abrirModalRodada }) {
+  const [verPorDimensao, setVerPorDimensao] = useState(false);
+
+  const totalDocs = documentos.length;
+  const aprovados = documentos.filter((d) => d.status === "Aprovado").length;
+  const pctAprovados = totalDocs ? Math.round((aprovados / totalDocs) * 100) : 0;
+  const toneAprovados = pctAprovados >= 70 ? "green" : pctAprovados >= 30 ? "amber" : "red";
+
+  const emAtraso = documentos.filter((d) => {
+    const dias = diasAte(d.dataProximaRevisao);
+    return dias !== null && dias < 0;
+  }).length;
+  const toneAtraso = emAtraso === 0 ? "green" : emAtraso <= 2 ? "amber" : "red";
+
+  const onboarding = treinamentos.find((t) => t.tipo === "Integração (Onboarding)");
+  const designacoesOnboarding = onboarding ? treinamentoDesignacoes.filter((d) => d.treinamentoId === onboarding.id) : [];
+  const concluiramOnboarding = designacoesOnboarding.filter((d) => d.status === "Concluído").length;
+  const totalHeadcount = configuracoes.totalColaboradoresAtivos || 0;
+  const pctIntegracao = totalHeadcount ? Math.round((concluiramOnboarding / totalHeadcount) * 100) : null;
+
+  const ultimaRodada = ibgcRounds[ibgcRounds.length - 1];
+  const rodadaAnterior = ibgcRounds.length > 1 ? ibgcRounds[ibgcRounds.length - 2] : null;
+  const tendenciaIbgc = rodadaAnterior ? ultimaRodada.consolidado - rodadaAnterior.consolidado : null;
+  const toneIbgc = toneFromEstagio(ultimaRodada.estagio);
+
+  const dadosGrafico = ibgcRounds.map((r) => ({
+    label: formatarData(r.data),
+    Consolidado: r.consolidado,
+    Sócios: r.socios,
+    Conselho: r.conselho,
+    Diretoria: r.diretoria,
+    Fiscalização: r.fiscalizacao,
+    Conduta: r.conduta,
+  }));
+
+  const proximasAcoes = documentos
+    .filter((d) => d.dataProximaRevisao)
+    .sort((a, b) => new Date(a.dataProximaRevisao) - new Date(b.dataProximaRevisao))
+    .slice(0, 5);
+
+  const atividadeRecente = [...auditLog].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 6);
+
+  const contagemStatus = STATUS_COLUNAS.reduce((acc, s) => {
+    acc[s] = documentos.filter((d) => d.status === s).length;
+    return acc;
+  }, {});
+  const coresStatus = {
+    "Não iniciado": "bg-stone-300",
+    "Em andamento": "bg-amber-400",
+    "Em revisão": "bg-amber-600",
+    Aprovado: "bg-emerald-500",
+  };
+
+  const casosAbertos = casos.filter((c) => !["Concluída", "Arquivada"].includes(c.status));
+  const casosDentroPrazo = casosAbertos.filter((c) => {
+    const dias = diasAte(calcularPrazoCaso(c, slaConfig));
+    return dias === null || dias >= 0;
+  });
+  const pctSla = casosAbertos.length ? Math.round((casosDentroPrazo.length / casosAbertos.length) * 100) : null;
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-900">Programa de Integridade 2.0 — Fase 1 de 4</h1>
+          <p className="text-sm text-stone-500">Visão consolidada do programa, atualizada em tempo real pelo comitê.</p>
+        </div>
+        <button
+          onClick={abrirModalRodada}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+        >
+          <Plus className="h-3.5 w-3.5" /> Registrar nova rodada IBGC
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          label="Pontuação IBGC"
+          valor={`${ultimaRodada.consolidado}/100`}
+          sublabel={`Estágio: ${ultimaRodada.estagio}`}
+          tone={toneIbgc}
+          tendencia={tendenciaIbgc}
+        />
+        <KpiCard
+          label="Documentos vigentes"
+          valor={`${aprovados}/${totalDocs}`}
+          sublabel={`${pctAprovados}% da matriz aprovada`}
+          tone={toneAprovados}
+        />
+        <KpiCard
+          label="Integração concluída"
+          valor={pctIntegracao === null ? "—" : `${pctIntegracao}%`}
+          sublabel={totalHeadcount ? `${concluiramOnboarding}/${totalHeadcount} colaboradores` : "Defina o headcount na Administração"}
+          tone={pctIntegracao === null ? "neutral" : pctIntegracao >= 70 ? "green" : pctIntegracao >= 30 ? "amber" : "red"}
+        />
+        <KpiCard label="Tarefas em atraso" valor={emAtraso} sublabel="Documentos com revisão vencida" tone={toneAtraso} />
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-stone-800">Evolução da Maturidade de Governança</h2>
+          <button
+            onClick={() => setVerPorDimensao((v) => !v)}
+            className="text-xs font-medium text-stone-500 underline decoration-stone-300 underline-offset-2 hover:text-stone-800"
+          >
+            {verPorDimensao ? "Ver consolidado" : "Ver por dimensão"}
+          </button>
+        </div>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={dadosGrafico} margin={{ top: 5, right: 16, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0eee9" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#a8a29e" }} axisLine={{ stroke: "#e7e5e4" }} tickLine={false} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#a8a29e" }} axisLine={false} tickLine={false} width={28} />
+              <ReferenceLine y={20} stroke="#e7e5e4" strokeDasharray="3 3" />
+              <ReferenceLine y={40} stroke="#e7e5e4" strokeDasharray="3 3" />
+              <ReferenceLine y={60} stroke="#e7e5e4" strokeDasharray="3 3" />
+              <ReferenceLine y={80} stroke="#e7e5e4" strokeDasharray="3 3" />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e7e5e4" }} />
+              <Line type="monotone" dataKey="Consolidado" stroke={HEX_TONE.graphite} strokeWidth={2.5} dot={{ r: 4 }} />
+              {verPorDimensao && (
+                <>
+                  <Line type="monotone" dataKey="Sócios" stroke={HEX_TONE[toneFromEstagio(estagioFromPontuacao(ultimaRodada.socios))]} strokeWidth={1.5} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="Conselho" stroke={HEX_TONE[toneFromEstagio(estagioFromPontuacao(ultimaRodada.conselho))]} strokeWidth={1.5} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="Diretoria" stroke={HEX_TONE[toneFromEstagio(estagioFromPontuacao(ultimaRodada.diretoria))]} strokeWidth={1.5} dot={{ r: 3 }} strokeDasharray="4 2" />
+                  <Line type="monotone" dataKey="Fiscalização" stroke={HEX_TONE[toneFromEstagio(estagioFromPontuacao(ultimaRodada.fiscalizacao))]} strokeWidth={1.5} dot={{ r: 3 }} strokeDasharray="2 2" />
+                  <Line type="monotone" dataKey="Conduta" stroke={HEX_TONE[toneFromEstagio(estagioFromPontuacao(ultimaRodada.conduta))]} strokeWidth={1.5} dot={{ r: 3 }} strokeDasharray="6 2" />
+                </>
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="mt-2 text-[11px] text-stone-400">
+          Linhas de referência em 20 / 40 / 60 / 80 marcam a escala oficial do IBGC (Embrionário · Inicial · Básico · Sólido · Avançado).
+          {ibgcRounds.length === 1 && " Esta é a primeira rodada registrada — a curva ganha forma a cada nova reaplicação."}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border border-stone-200 bg-white p-5">
+          <h2 className="mb-3 text-sm font-semibold text-stone-800">Matriz de Controle</h2>
+          <div className="flex h-3 w-full overflow-hidden rounded-full bg-stone-100">
+            {STATUS_COLUNAS.map((s) => (
+              <div
+                key={s}
+                className={coresStatus[s]}
+                style={{ width: `${totalDocs ? (contagemStatus[s] / totalDocs) * 100 : 0}%` }}
+                title={`${s}: ${contagemStatus[s]}`}
+              />
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 text-[11px] text-stone-500">
+            {STATUS_COLUNAS.map((s) => (
+              <span key={s} className="flex items-center gap-1.5">
+                <span className={classNames("h-2 w-2 rounded-full", coresStatus[s])} /> {s} ({contagemStatus[s]})
+              </span>
+            ))}
+          </div>
+          <button
+            onClick={() => setView("matriz")}
+            className="mt-4 text-xs font-medium text-stone-600 underline decoration-stone-300 underline-offset-2 hover:text-stone-900"
+          >
+            Abrir matriz completa →
+          </button>
+        </div>
+
+        <div className="rounded-xl border border-stone-200 bg-white p-5">
+          <h2 className="mb-3 text-sm font-semibold text-stone-800">Canal de Denúncias</h2>
+          {casos.length === 0 ? (
+            <p className="text-xs text-stone-400">Nenhum caso registrado ainda.</p>
+          ) : (
+            <>
+              <div className="flex items-end gap-2">
+                <span className="text-2xl font-semibold tabular-nums text-stone-900">{casosAbertos.length}</span>
+                <span className="mb-0.5 text-xs text-stone-500">caso(s) em aberto</span>
+              </div>
+              <p className="mt-1 text-xs text-stone-500">
+                {pctSla === null ? "Nenhum caso em aberto" : `${pctSla}% dentro do prazo de resposta`}
+              </p>
+            </>
+          )}
+          <button
+            onClick={() => setView("denuncias")}
+            className="mt-4 text-xs font-medium text-stone-600 underline decoration-stone-300 underline-offset-2 hover:text-stone-900"
+          >
+            Abrir canal completo →
+          </button>
+        </div>
+
+        <div className="rounded-xl border border-stone-200 bg-white p-5">
+          <h2 className="mb-3 text-sm font-semibold text-stone-800">Próximas ações</h2>
+          {proximasAcoes.length === 0 && <p className="text-xs text-stone-400">Nenhum documento com data de revisão definida ainda.</p>}
+          <ul className="space-y-2">
+            {proximasAcoes.map((d) => {
+              const dias = diasAte(d.dataProximaRevisao);
+              return (
+                <li key={d.id}>
+                  <button
+                    onClick={() => abrirDocumento(d.id)}
+                    className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left hover:bg-stone-50"
+                  >
+                    <span className="truncate text-xs font-medium text-stone-700">{d.nome}</span>
+                    <span className={classNames("ml-2 shrink-0 text-xs font-medium", dias < 0 ? "text-red-600" : dias <= 14 ? "text-amber-600" : "text-stone-400")}>
+                      {dias < 0 ? `atrasado ${Math.abs(dias)}d` : `${dias}d`}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-semibold text-stone-800">Atividade recente</h2>
+        {atividadeRecente.length === 0 && <p className="text-xs text-stone-400">Nenhuma alteração registrada ainda.</p>}
+        <ul className="space-y-2.5">
+          {atividadeRecente.map((ev) => (
+            <li key={ev.id} className="flex items-start gap-2 text-xs">
+              <Dot tone="neutral" />
+              <p className="text-stone-600">
+                <span className="font-medium text-stone-800">{ev.usuario}</span> alterou{" "}
+                <span className="font-medium text-stone-800">{FIELD_LABELS[ev.campo] || ev.campo}</span> de{" "}
+                <span className="text-stone-500">"{formatarValorAuditoria(ev.campo, ev.valorAntigo)}"</span> para{" "}
+                <span className="text-stone-500">"{formatarValorAuditoria(ev.campo, ev.valorNovo)}"</span> em{" "}
+                <span className="font-medium text-stone-800">{ev.documentoNome}</span>
+                <span className="ml-1 text-stone-400">· {tempoRelativo(ev.timestamp)}</span>
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- matriz de controle ----------------------------- */
+
+function CartaoDocumento({ doc, onClick }) {
+  const dias = diasAte(doc.dataProximaRevisao);
+  return (
+    <div
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", doc.id)}
+      onClick={onClick}
+      className="cursor-pointer rounded-lg border border-stone-200 bg-white p-3 shadow-sm hover:border-stone-300 hover:shadow"
+    >
+      <div className="mb-1.5 flex items-center justify-between">
+        <Tag tone="neutral">{doc.tipo}</Tag>
+        <Dot tone={riscoTone(doc.risco)} />
+      </div>
+      <p className="text-xs font-medium leading-snug text-stone-800">{doc.nome}</p>
+      <div className="mt-2 flex items-center justify-between">
+        <Tag tone="neutral">{doc.area}</Tag>
+        <Avatares nomes={doc.responsaveis} />
+      </div>
+      {dias !== null && dias < 30 && (
+        <p className={classNames("mt-2 flex items-center gap-1 text-[11px] font-medium", dias < 0 ? "text-red-600" : "text-amber-600")}>
+          <AlertTriangle className="h-3 w-3" /> {dias < 0 ? `revisão atrasada ${Math.abs(dias)}d` : `revisão em ${dias}d`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ColunaKanban({ status, documentos, onClickDoc, onDrop }) {
+  return (
+    <div
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        const id = e.dataTransfer.getData("text/plain");
+        onDrop(id, status);
+      }}
+      className="flex min-h-[200px] flex-1 flex-col rounded-xl bg-stone-100/60 p-2"
+    >
+      <div className="mb-2 flex items-center justify-between px-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500">{status}</h3>
+        <span className="text-xs text-stone-400">{documentos.length}</span>
+      </div>
+      <div className="space-y-2">
+        {documentos.map((doc) => (
+          <CartaoDocumento key={doc.id} doc={doc} onClick={() => onClickDoc(doc.id)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LinhaTabela({ doc, onClick }) {
+  const dias = diasAte(doc.dataProximaRevisao);
+  return (
+    <tr onClick={onClick} className="cursor-pointer border-b border-stone-100 hover:bg-stone-50">
+      <td className="px-3 py-2.5">
+        <p className="text-xs font-medium text-stone-800">{doc.nome}</p>
+      </td>
+      <td className="px-3 py-2.5">
+        <Tag tone="neutral">{doc.tipo}</Tag>
+      </td>
+      <td className="px-3 py-2.5 text-xs text-stone-600">{doc.area}</td>
+      <td className="px-3 py-2.5">
+        <Tag tone={doc.status === "Aprovado" ? "green" : doc.status === "Em revisão" ? "amber" : "neutral"}>{doc.status}</Tag>
+      </td>
+      <td className="px-3 py-2.5 text-xs text-stone-600">{doc.prioridade}</td>
+      <td className="px-3 py-2.5">
+        <span className="flex items-center gap-1.5 text-xs text-stone-600">
+          <Dot tone={riscoTone(doc.risco)} /> {doc.risco}
+        </span>
+      </td>
+      <td className="px-3 py-2.5 text-xs text-stone-600">
+        {formatarData(doc.dataProximaRevisao)}
+        {dias !== null && dias < 0 && <span className="ml-1 text-red-600">(atrasado)</span>}
+      </td>
+      <td className="px-3 py-2.5">
+        <Avatares nomes={doc.responsaveis} />
+      </td>
+    </tr>
+  );
+}
+
+function FiltrosMatriz({ filtros, setFiltros, aberta, setAberta }) {
+  const camposFiltro = [
+    { chave: "area", rotulo: "Área", opcoes: AREAS },
+    { chave: "tipo", rotulo: "Tipo", opcoes: TIPOS_DOCUMENTO.map((t) => t.atual) },
+    { chave: "prioridade", rotulo: "Prioridade", opcoes: ["Alta", "Média", "Baixa"] },
+    { chave: "risco", rotulo: "Risco", opcoes: ["Alto", "Médio", "Baixo"] },
+  ];
+  const algumFiltroAtivo = Object.values(filtros).some((v) => v !== "");
+
+  return (
+    <div className="mb-3">
+      <button onClick={() => setAberta(!aberta)} className="flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-stone-800">
+        <ChevronDown className={classNames("h-3.5 w-3.5 transition-transform", aberta && "rotate-180")} />
+        Filtros
+        {algumFiltroAtivo && <span className="ml-1 rounded-full bg-stone-800 px-1.5 text-[10px] text-white">ativos</span>}
+      </button>
+      {aberta && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {camposFiltro.map((c) => (
+            <select
+              key={c.chave}
+              value={filtros[c.chave]}
+              onChange={(e) => setFiltros({ ...filtros, [c.chave]: e.target.value })}
+              className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-600 outline-none focus:border-stone-500"
+            >
+              <option value="">{c.rotulo}: todos</option>
+              {c.opcoes.map((op) => (
+                <option key={op} value={op}>
+                  {op}
+                </option>
+              ))}
+            </select>
+          ))}
+          {algumFiltroAtivo && (
+            <button
+              onClick={() => setFiltros({ area: "", tipo: "", prioridade: "", risco: "" })}
+              className="text-xs font-medium text-stone-400 hover:text-stone-700"
+            >
+              Limpar filtros
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Matriz({ documentos, busca, onClickDoc, onMoveStatus, onCriarDocumento }) {
+  const [modo, setModo] = useState("kanban");
+  const [filtros, setFiltros] = useState({ area: "", tipo: "", prioridade: "", risco: "" });
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
+  const [modalNovoAberto, setModalNovoAberto] = useState(false);
+  const [sort, setSort] = useState({ campo: "nome", dir: 1 });
+
+  const filtrados = useMemo(() => {
+    return documentos.filter((d) => {
+      if (busca && !d.nome.toLowerCase().includes(busca.toLowerCase())) return false;
+      if (filtros.area && d.area !== filtros.area) return false;
+      if (filtros.tipo && d.tipo !== filtros.tipo) return false;
+      if (filtros.prioridade && d.prioridade !== filtros.prioridade) return false;
+      if (filtros.risco && d.risco !== filtros.risco) return false;
+      return true;
+    });
+  }, [documentos, busca, filtros]);
+
+  const ordenados = useMemo(() => {
+    const copia = [...filtrados];
+    copia.sort((a, b) => {
+      const va = a[sort.campo] ?? "";
+      const vb = b[sort.campo] ?? "";
+      return va > vb ? sort.dir : va < vb ? -sort.dir : 0;
+    });
+    return copia;
+  }, [filtrados, sort]);
+
+  function alternarOrdenacao(campo) {
+    setSort((prev) => (prev.campo === campo ? { campo, dir: -prev.dir } : { campo, dir: 1 }));
+  }
+
+  const colunasTabela = [
+    { campo: "nome", rotulo: "Nome" },
+    { campo: "tipo", rotulo: "Tipo" },
+    { campo: "area", rotulo: "Área" },
+    { campo: "status", rotulo: "Status" },
+    { campo: "prioridade", rotulo: "Prioridade" },
+    { campo: "risco", rotulo: "Risco" },
+    { campo: "dataProximaRevisao", rotulo: "Próx. revisão" },
+    { campo: null, rotulo: "Responsáveis" },
+  ];
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-900">Matriz de Controle e Revisão</h1>
+          <p className="text-xs text-stone-500">{filtrados.length} de {documentos.length} documentos</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-stone-300 p-0.5">
+            <button
+              onClick={() => setModo("kanban")}
+              className={classNames("rounded-md px-3 py-1 text-xs font-medium", modo === "kanban" ? "bg-stone-900 text-white" : "text-stone-500")}
+            >
+              Kanban
+            </button>
+            <button
+              onClick={() => setModo("tabela")}
+              className={classNames("rounded-md px-3 py-1 text-xs font-medium", modo === "tabela" ? "bg-stone-900 text-white" : "text-stone-500")}
+            >
+              Tabela
+            </button>
+          </div>
+          <button
+            onClick={() => setModalNovoAberto(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+          >
+            <Plus className="h-3.5 w-3.5" /> Novo item
+          </button>
+        </div>
+      </div>
+
+      <FiltrosMatriz filtros={filtros} setFiltros={setFiltros} aberta={filtrosAbertos} setAberta={setFiltrosAbertos} />
+
+      {modo === "kanban" ? (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {STATUS_COLUNAS.map((status) => (
+            <ColunaKanban
+              key={status}
+              status={status}
+              documentos={ordenados.filter((d) => d.status === status)}
+              onClickDoc={onClickDoc}
+              onDrop={onMoveStatus}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-stone-200 bg-stone-50">
+                {colunasTabela.map((c) => (
+                  <th
+                    key={c.rotulo}
+                    onClick={() => c.campo && alternarOrdenacao(c.campo)}
+                    className={classNames(
+                      "px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-stone-500",
+                      c.campo && "cursor-pointer hover:text-stone-800"
+                    )}
+                  >
+                    {c.rotulo}
+                    {sort.campo === c.campo && (sort.dir === 1 ? " ↑" : " ↓")}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ordenados.map((doc) => (
+                <LinhaTabela key={doc.id} doc={doc} onClick={() => onClickDoc(doc.id)} />
+              ))}
+            </tbody>
+          </table>
+          {ordenados.length === 0 && <p className="p-6 text-center text-xs text-stone-400">Nenhum documento encontrado com esses filtros.</p>}
+        </div>
+      )}
+
+      {modalNovoAberto && (
+        <ModalNovoDocumento
+          onClose={() => setModalNovoAberto(false)}
+          onSalvar={(dados) => {
+            onCriarDocumento(dados);
+            setModalNovoAberto(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalNovoDocumento({ onClose, onSalvar }) {
+  const [form, setForm] = useState({
+    nome: "",
+    tipo: TIPOS_DOCUMENTO[0].atual,
+    classificacao: "Governança",
+    area: AREAS[0],
+    pilar: PILARES[0].nome,
+    prioridade: "Média",
+    risco: "Médio",
+  });
+
+  return (
+    <Modal titulo="Novo item da Matriz de Controle" onClose={onClose}>
+      <div className="space-y-3">
+        <Campo label="Nome do documento">
+          <input className={inputCls} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Ex.: Diretriz de Privacidade" />
+        </Campo>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Tipo">
+            <select className={inputCls} value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+              {TIPOS_DOCUMENTO.map((t) => (
+                <option key={t.atual} value={t.atual}>
+                  {t.atual}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Classificação">
+            <select className={inputCls} value={form.classificacao} onChange={(e) => setForm({ ...form, classificacao: e.target.value })}>
+              {["Governança", "Tático", "Operacional"].map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Área responsável">
+            <select className={inputCls} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })}>
+              {AREAS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Pilar da trilha">
+            <select className={inputCls} value={form.pilar} onChange={(e) => setForm({ ...form, pilar: e.target.value })}>
+              {PILARES.map((p) => (
+                <option key={p.nome} value={p.nome}>
+                  {p.nome}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Prioridade">
+            <select className={inputCls} value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })}>
+              {["Alta", "Média", "Baixa"].map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Classificação de risco">
+            <select className={inputCls} value={form.risco} onChange={(e) => setForm({ ...form, risco: e.target.value })}>
+              {["Alto", "Médio", "Baixo"].map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </Campo>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-100">
+            Cancelar
+          </button>
+          <button
+            disabled={!form.nome.trim()}
+            onClick={() => onSalvar(form)}
+            className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-40"
+          >
+            Criar item
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------ drawer de detalhe (documento) ------------------------------ */
+
+function DetailDrawer({ doc, auditEntries, onClose, onUpdate, onComentar, onAnexar, onRemoverAnexo }) {
+  const [aba, setAba] = useState("geral");
+  const [novoComentario, setNovoComentario] = useState("");
+  const [novoAnexo, setNovoAnexo] = useState("");
+
+  if (!doc) return null;
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-stone-900/30">
+      <div className="flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-stone-200 px-5 py-4">
+          <div className="min-w-0">
+            <Tag tone="neutral">{doc.tipo}</Tag>
+            <h3 className="mt-1.5 truncate text-sm font-semibold text-stone-900">{doc.nome}</h3>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex border-b border-stone-200 px-5">
+          {[
+            { chave: "geral", rotulo: "Visão Geral" },
+            { chave: "historico", rotulo: "Histórico", icone: History },
+            { chave: "anexos", rotulo: "Anexos", icone: Paperclip },
+            { chave: "comentarios", rotulo: "Comentários", icone: MessageSquare },
+          ].map((t) => (
+            <button
+              key={t.chave}
+              onClick={() => setAba(t.chave)}
+              className={classNames(
+                "border-b-2 px-3 py-2.5 text-xs font-medium",
+                aba === t.chave ? "border-stone-900 text-stone-900" : "border-transparent text-stone-400 hover:text-stone-600"
+              )}
+            >
+              {t.rotulo}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {aba === "geral" && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Status">
+                  <select className={inputCls} value={doc.status} onChange={(e) => onUpdate(doc.id, { status: e.target.value })}>
+                    {STATUS_COLUNAS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Prioridade">
+                  <select className={inputCls} value={doc.prioridade} onChange={(e) => onUpdate(doc.id, { prioridade: e.target.value })}>
+                    {["Alta", "Média", "Baixa"].map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Classificação de risco">
+                  <select className={inputCls} value={doc.risco} onChange={(e) => onUpdate(doc.id, { risco: e.target.value })}>
+                    {["Alto", "Médio", "Baixo"].map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Próxima revisão">
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={doc.dataProximaRevisao ? doc.dataProximaRevisao.slice(0, 10) : ""}
+                    onChange={(e) => onUpdate(doc.id, { dataProximaRevisao: e.target.value || null })}
+                  />
+                </Campo>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Última revisão">
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={doc.dataUltimaRevisao ? doc.dataUltimaRevisao.slice(0, 10) : ""}
+                    onChange={(e) => {
+                      const novaData = e.target.value || null;
+                      onUpdate(doc.id, {
+                        dataUltimaRevisao: novaData,
+                        dataProximaRevisao: calcularProximaRevisao(novaData, doc.cicloRevisaoMeses),
+                      });
+                    }}
+                  />
+                </Campo>
+                <Campo label="Ciclo de revisão">
+                  <select
+                    className={inputCls}
+                    value={doc.cicloRevisaoMeses || 24}
+                    onChange={(e) => {
+                      const novoCiclo = Number(e.target.value);
+                      onUpdate(doc.id, {
+                        cicloRevisaoMeses: novoCiclo,
+                        dataProximaRevisao: calcularProximaRevisao(doc.dataUltimaRevisao, novoCiclo),
+                      });
+                    }}
+                  >
+                    {CICLOS_REVISAO_MESES.map((m) => (
+                      <option key={m} value={m}>
+                        {m === 12 ? "Anual (12 meses)" : m === 24 ? "Bienal (24 meses)" : m === 6 ? "Semestral (6 meses)" : `${m} meses`}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+              </div>
+              <p className="text-[11px] text-stone-400">
+                A próxima revisão recalcula sozinha a partir da última revisão + ciclo — edite manualmente acima se
+                precisar de uma exceção.
+              </p>
+              <Campo label="Ação recomendada">
+                <select
+                  className={inputCls}
+                  value={doc.acaoRecomendada || ""}
+                  onChange={(e) => onUpdate(doc.id, { acaoRecomendada: e.target.value || null })}
+                >
+                  <option value="">—</option>
+                  {["Manter", "Revisar", "Retirar", "Encaminhar para área"].map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+              <Campo label="Responsáveis (separados por vírgula)">
+                <input
+                  className={inputCls}
+                  value={doc.responsaveis.join(", ")}
+                  onChange={(e) =>
+                    onUpdate(doc.id, {
+                      responsaveis: e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+              </Campo>
+              <Campo label="Observações">
+                <textarea
+                  className={classNames(inputCls, "min-h-[72px] resize-none")}
+                  value={doc.observacoes}
+                  onChange={(e) => onUpdate(doc.id, { observacoes: e.target.value })}
+                />
+              </Campo>
+              <div className="grid grid-cols-2 gap-3 pt-1 text-xs text-stone-400">
+                <p>Área: <span className="text-stone-600">{doc.area}</span></p>
+                <p>Pilar: <span className="text-stone-600">{doc.pilar}</span></p>
+                <p>Criado em: <span className="text-stone-600">{formatarData(doc.criadoEm)}</span></p>
+                <p>Atualizado: <span className="text-stone-600">{tempoRelativo(doc.atualizadoEm)}</span></p>
+              </div>
+            </div>
+          )}
+
+          {aba === "historico" && (
+            <div className="space-y-3">
+              {auditEntries.length === 0 && <p className="text-xs text-stone-400">Nenhuma alteração registrada para este item ainda.</p>}
+              {auditEntries.map((ev) => (
+                <div key={ev.id} className="flex gap-2.5">
+                  <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-stone-300" />
+                  <div className="text-xs">
+                    <p className="text-stone-700">
+                      <span className="font-medium">{FIELD_LABELS[ev.campo] || ev.campo}</span>: "{formatarValorAuditoria(ev.campo, ev.valorAntigo)}" → "
+                      {formatarValorAuditoria(ev.campo, ev.valorNovo)}"
+                    </p>
+                    <p className="text-stone-400">
+                      {ev.usuario} · {formatarData(ev.timestamp)} {new Date(ev.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {aba === "anexos" && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  className={inputCls}
+                  placeholder="Nome do arquivo (ex.: minuta_v3.pdf)"
+                  value={novoAnexo}
+                  onChange={(e) => setNovoAnexo(e.target.value)}
+                />
+                <button
+                  onClick={() => {
+                    if (!novoAnexo.trim()) return;
+                    onAnexar(doc.id, novoAnexo.trim());
+                    setNovoAnexo("");
+                  }}
+                  className="shrink-0 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+                >
+                  Anexar
+                </button>
+              </div>
+              <p className="text-[11px] text-stone-400">
+                Protótipo registra apenas o metadado do anexo. Na arquitetura completa (ver Osklen_GRC_Schema.sql), o arquivo
+                vai para um bucket com URL assinada.
+              </p>
+              {doc.anexos.length === 0 && <p className="text-xs text-stone-400">Nenhum anexo ainda.</p>}
+              <ul className="space-y-1.5">
+                {doc.anexos.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between rounded-lg border border-stone-200 px-3 py-2 text-xs">
+                    <span className="flex items-center gap-2 text-stone-700">
+                      <Paperclip className="h-3.5 w-3.5 text-stone-400" /> {a.nome}
+                    </span>
+                    <button onClick={() => onRemoverAnexo(doc.id, a.id)} className="text-stone-300 hover:text-red-500">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {aba === "comentarios" && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  className={inputCls}
+                  placeholder="Escreva um comentário..."
+                  value={novoComentario}
+                  onChange={(e) => setNovoComentario(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && novoComentario.trim()) {
+                      onComentar(doc.id, novoComentario.trim());
+                      setNovoComentario("");
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (!novoComentario.trim()) return;
+                    onComentar(doc.id, novoComentario.trim());
+                    setNovoComentario("");
+                  }}
+                  className="shrink-0 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+                >
+                  Enviar
+                </button>
+              </div>
+              {doc.comentarios.length === 0 && <p className="text-xs text-stone-400">Nenhum comentário ainda.</p>}
+              <ul className="space-y-2.5">
+                {[...doc.comentarios].reverse().map((c) => (
+                  <li key={c.id} className="rounded-lg bg-stone-50 px-3 py-2">
+                    <p className="text-xs text-stone-700">{c.texto}</p>
+                    <p className="mt-1 text-[11px] text-stone-400">
+                      {c.autor} · {tempoRelativo(c.data)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- fluxos -------------------------------- */
+
+function Fluxos({ documentos }) {
+  return (
+    <div className="mx-auto max-w-6xl">
+      <h1 className="text-lg font-semibold text-stone-900">Central de Fluxos e Processos</h1>
+      <p className="mb-5 text-sm text-stone-500">As quatro fases do programa de integridade, do diagnóstico à auditoria contínua.</p>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {FASES_METODOLOGICAS.map((fase, idx) => {
+          const docsNaFase =
+            fase === "Estudo"
+              ? documentos.filter((d) => d.status === "Não iniciado").length
+              : fase === "Implementação"
+              ? documentos.filter((d) => d.status === "Em andamento").length
+              : fase === "Monitoramento"
+              ? documentos.filter((d) => d.status === "Em revisão").length
+              : documentos.filter((d) => d.status === "Aprovado").length;
+          return (
+            <div key={fase} className="rounded-xl border border-stone-200 bg-white p-5">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-stone-900 text-xs font-semibold text-white">
+                  {String(idx + 1).padStart(2, "0")}
+                </span>
+                <h2 className="text-sm font-semibold text-stone-800">{fase}</h2>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-stone-500">
+                {fase === "Estudo" && "Diagnóstico inicial, levantamento documental e mapeamento de riscos por área."}
+                {fase === "Implementação" && "Elaboração e publicação dos documentos, treinamentos e fluxos de cada departamento."}
+                {fase === "Monitoramento" && "Revisão periódica, ciência digital e acompanhamento de KPIs de conformidade."}
+                {fase === "Auditoria" && "Verificação independente de aderência e reaplicação da Métrica IBGC."}
+              </p>
+              <p className="mt-3 text-xs font-medium text-stone-600">{docsNaFase} documento(s) nesta etapa hoje</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <h2 className="mb-3 mt-8 text-sm font-semibold text-stone-800">Pilares da trilha</h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {PILARES.map((p) => (
+          <div key={p.nome} className="rounded-xl border border-stone-200 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Pilar {String(p.numero).padStart(2, "0")}</p>
+            <p className="mt-1 text-sm font-medium text-stone-800">{p.nome}</p>
+            <p className="mt-2 text-xs text-stone-500">{p.descricao}</p>
+            <p className="mt-3 text-xs font-medium text-stone-600">
+              {documentos.filter((d) => d.pilar === p.nome).length} documento(s)
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- treinamentos ----------------------------- */
+
+/* ----------------------------- biblioteca corporativa ----------------------------- */
+
+function Biblioteca({ documentos, busca, onClickDoc }) {
+  const [pilarFiltro, setPilarFiltro] = useState("");
+
+  const filtrados = documentos.filter((d) => {
+    if (busca && !d.nome.toLowerCase().includes(busca.toLowerCase())) return false;
+    if (pilarFiltro && d.pilar !== pilarFiltro) return false;
+    return true;
+  });
+
+  const porPilar = PILARES.map((p) => ({ pilar: p, docs: filtrados.filter((d) => d.pilar === p.nome) }));
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-900">Biblioteca Corporativa</h1>
+          <p className="text-xs text-stone-500">
+            Os mesmos documentos da Matriz de Controle, organizados para consulta — com validade calculada
+            automaticamente.
+          </p>
+        </div>
+        <select value={pilarFiltro} onChange={(e) => setPilarFiltro(e.target.value)} className="rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-600">
+          <option value="">Todos os pilares</option>
+          {PILARES.map((p) => (
+            <option key={p.nome} value={p.nome}>
+              {p.nome}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {porPilar.map(
+        ({ pilar, docs }) =>
+          docs.length > 0 && (
+            <div key={pilar.nome} className="mb-6">
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-400">
+                Pilar {String(pilar.numero).padStart(2, "0")} · {pilar.nome}
+              </h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {docs.map((d) => {
+                  const dias = diasAte(d.dataProximaRevisao);
+                  const vencido = dias !== null && dias < 0;
+                  const venceLogo = dias !== null && dias >= 0 && dias <= 60;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => onClickDoc(d.id)}
+                      className="rounded-xl border border-stone-200 bg-white p-4 text-left hover:border-stone-300 hover:shadow-sm"
+                    >
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <Tag tone="neutral">{d.tipo}</Tag>
+                        <Tag tone={d.status === "Aprovado" ? "green" : "neutral"}>{d.status}</Tag>
+                      </div>
+                      <p className="text-xs font-medium leading-snug text-stone-800">{d.nome}</p>
+                      <p className="mt-1 text-[11px] text-stone-400">{d.area} {d.versao && `· ${d.versao}`}</p>
+                      <div className="mt-2.5 border-t border-stone-100 pt-2 text-[11px]">
+                        {d.dataProximaRevisao ? (
+                          <span className={classNames("flex items-center gap-1 font-medium", vencido ? "text-red-600" : venceLogo ? "text-amber-600" : "text-stone-400")}>
+                            {(vencido || venceLogo) && <AlertTriangle className="h-3 w-3" />}
+                            {vencido ? `validade vencida há ${Math.abs(dias)}d` : `válido até ${formatarData(d.dataProximaRevisao)}`}
+                          </span>
+                        ) : (
+                          <span className="text-stone-400">Validade não calculada — defina a última revisão</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )
+      )}
+
+      {filtrados.length === 0 && <p className="text-center text-xs text-stone-400">Nenhum documento encontrado.</p>}
+    </div>
+  );
+}
+
+function Treinamentos({ treinamentos, treinamentoDesignacoes, colaboradores, configuracoes, setView }) {
+  const total = configuracoes.totalColaboradoresAtivos || 0;
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-900">Hub de Treinamentos e Cultura</h1>
+          <p className="text-sm text-stone-500">Estratégia de capacitação por público e frequência, com evidência de conclusão.</p>
+        </div>
+      </div>
+
+      {total === 0 && (
+        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-800">
+          <strong className="font-semibold">Defina o headcount:</strong> os indicadores abaixo viram percentual de
+          verdade quando você configurar o "Total de colaboradores ativos" na Administração — hoje mostro só números
+          absolutos.
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {treinamentos.map((t) => {
+          const designacoes = treinamentoDesignacoes.filter((d) => d.treinamentoId === t.id);
+          const concluidos = designacoes.filter((d) => d.status === "Concluído").length;
+          const designados = designacoes.length;
+          const pendentesHeadcount = total ? Math.max(total - concluidos, 0) : null;
+          const pctHeadcount = total ? Math.round((concluidos / total) * 100) : null;
+
+          const recemAdmitidos =
+            t.tipo === "Integração (Onboarding)"
+              ? colaboradores.filter((c) => {
+                  const dias = diasDesde(c.dataAdmissao);
+                  if (dias === null || dias > 30) return false;
+                  const designacao = designacoes.find((d) => d.colaboradorId === c.id);
+                  return !designacao || designacao.status !== "Concluído";
+                }).length
+              : null;
+
+          return (
+            <div key={t.id} className="rounded-xl border border-stone-200 bg-white p-5">
+              <div className="flex items-start justify-between">
+                <h2 className="text-sm font-semibold text-stone-800">{t.nome}</h2>
+                <Tag tone="neutral">{t.formato}</Tag>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                <dt className="text-stone-400">Frequência</dt>
+                <dd className="text-stone-600">{t.frequencia}</dd>
+                <dt className="text-stone-400">Duração</dt>
+                <dd className="text-stone-600">{t.duracao}</dd>
+                <dt className="text-stone-400">Evidência</dt>
+                <dd className="text-stone-600">{t.evidencia}</dd>
+                {t.fonteExterna && (
+                  <>
+                    <dt className="text-stone-400">Fonte</dt>
+                    <dd className="text-stone-600">{t.fonteExterna}</dd>
+                  </>
+                )}
+              </dl>
+              <p className="mt-3 text-xs leading-relaxed text-stone-500">{t.conteudo}</p>
+
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg bg-stone-50 px-2 py-2">
+                  <p className="text-lg font-semibold tabular-nums text-stone-900">{concluidos}</p>
+                  <p className="text-[10px] text-stone-500">concluíram</p>
+                </div>
+                <div className="rounded-lg bg-stone-50 px-2 py-2">
+                  <p className="text-lg font-semibold tabular-nums text-stone-900">{pendentesHeadcount === null ? "—" : pendentesHeadcount}</p>
+                  <p className="text-[10px] text-stone-500">ainda não realizaram</p>
+                </div>
+                <div className="rounded-lg bg-stone-50 px-2 py-2">
+                  <p className="text-lg font-semibold tabular-nums text-stone-900">{recemAdmitidos === null ? "—" : recemAdmitidos}</p>
+                  <p className="text-[10px] text-stone-500">admitidos há ≤30d, pendentes</p>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="text-stone-500">{designados} designação(ões) registrada(s)</span>
+                  <span className="font-medium text-stone-700">{pctHeadcount === null ? "—" : `${pctHeadcount}% do headcount`}</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+                  <div className="h-full bg-emerald-500" style={{ width: `${pctHeadcount ?? 0}%` }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="mt-4 text-xs text-stone-400">
+        Designações e conclusões são lançadas a partir do perfil de cada colaborador —{" "}
+        <button onClick={() => setView("colaboradores")} className="font-medium text-stone-600 underline decoration-stone-300 underline-offset-2 hover:text-stone-900">
+          abrir Colaboradores →
+        </button>
+      </p>
+    </div>
+  );
+}
+
+/* ----------------------------- colaboradores ----------------------------- */
+
+function Colaboradores({ colaboradores, treinamentoDesignacoes, advertencias, treinamentos, configuracoes, busca, onClickColaborador, onCriarColaborador, onImportarColaboradores }) {
+  const [modalAberto, setModalAberto] = useState(false);
+  const [modalImportarAberto, setModalImportarAberto] = useState(false);
+
+  const filtrados = colaboradores.filter((c) => !busca || c.nome.toLowerCase().includes(busca.toLowerCase()));
+
+  const onboarding = treinamentos.find((t) => t.tipo === "Integração (Onboarding)");
+  const designacoesOnboarding = onboarding ? treinamentoDesignacoes.filter((d) => d.treinamentoId === onboarding.id) : [];
+  const concluiramOnboarding = designacoesOnboarding.filter((d) => d.status === "Concluído").length;
+  const recemAdmitidos = colaboradores.filter((c) => {
+    const dias = diasDesde(c.dataAdmissao);
+    return dias !== null && dias <= 30;
+  }).length;
+  const ativos = colaboradores.filter((c) => c.status === "Ativo").length;
+  const totalConfigurado = configuracoes.totalColaboradoresAtivos || 0;
+  const aindaNaoRealizaram = totalConfigurado ? Math.max(totalConfigurado - concluiramOnboarding, 0) : null;
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-900">Colaboradores</h1>
+          <p className="text-xs text-stone-500">{colaboradores.length} cadastrado(s) — histórico individual de treinamento, advertência e documentos.</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setModalImportarAberto(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+          >
+            <Users className="h-3.5 w-3.5" /> Importar lista
+          </button>
+          <button
+            onClick={() => setModalAberto(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+          >
+            <Plus className="h-3.5 w-3.5" /> Novo colaborador
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <KpiCard label="Colaboradores ativos" valor={ativos} sublabel={totalConfigurado ? `${totalConfigurado} configurado(s) na Administração` : "Configure o headcount na Administração"} tone="neutral" />
+        <KpiCard label="Concluíram a integração" valor={concluiramOnboarding} sublabel="Onboarding — Concluído" tone="green" />
+        <KpiCard label="Ainda não realizaram" valor={aindaNaoRealizaram === null ? "—" : aindaNaoRealizaram} sublabel={totalConfigurado ? "Baseado no headcount" : "Defina o headcount"} tone={aindaNaoRealizaram === null ? "neutral" : aindaNaoRealizaram === 0 ? "green" : "amber"} />
+        <KpiCard label="Entraram recentemente" valor={recemAdmitidos} sublabel="Admitidos nos últimos 30 dias" tone="neutral" />
+      </div>
+
+      {colaboradores.length === 0 ? (
+        <div className="rounded-xl border border-stone-200 bg-white p-8 text-center">
+          <Users className="mx-auto h-6 w-6 text-stone-300" />
+          <p className="mt-2 text-xs text-stone-400">
+            Nenhum colaborador cadastrado ainda. Cadastre um a um ou cole uma lista de uma vez — o histórico de
+            treinamento e advertência fica atrelado ao perfil de cada pessoa.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-stone-200 bg-stone-50 text-left text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                <th className="px-3 py-2">Nome</th>
+                <th className="px-3 py-2">Cargo</th>
+                <th className="px-3 py-2">Área</th>
+                <th className="px-3 py-2">Admissão</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Treinamentos</th>
+                <th className="px-3 py-2">Advertências</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map((c) => {
+                const concluidos = treinamentoDesignacoes.filter((d) => d.colaboradorId === c.id && d.status === "Concluído").length;
+                const advsCount = advertencias.filter((a) => a.colaboradorId === c.id).length;
+                return (
+                  <tr key={c.id} onClick={() => onClickColaborador(c.id)} className="cursor-pointer border-b border-stone-100 hover:bg-stone-50">
+                    <td className="px-3 py-2.5 text-xs font-medium text-stone-800">{c.nome}</td>
+                    <td className="px-3 py-2.5 text-xs text-stone-600">{c.cargo || "—"}</td>
+                    <td className="px-3 py-2.5 text-xs text-stone-600">{c.area || "—"}</td>
+                    <td className="px-3 py-2.5 text-xs text-stone-600">{formatarData(c.dataAdmissao)}</td>
+                    <td className="px-3 py-2.5">
+                      <Tag tone={c.status === "Ativo" ? "green" : "neutral"}>{c.status}</Tag>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-stone-600">{concluidos} concluído(s)</td>
+                    <td className="px-3 py-2.5">
+                      {advsCount > 0 ? <Tag tone="amber">{advsCount}</Tag> : <span className="text-xs text-stone-400">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modalAberto && (
+        <ModalNovoColaborador
+          onClose={() => setModalAberto(false)}
+          onSalvar={(dados) => {
+            onCriarColaborador(dados);
+            setModalAberto(false);
+          }}
+        />
+      )}
+
+      {modalImportarAberto && (
+        <ModalImportarColaboradores
+          onClose={() => setModalImportarAberto(false)}
+          onImportar={(lista) => {
+            onImportarColaboradores(lista);
+            setModalImportarAberto(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalImportarColaboradores({ onClose, onImportar }) {
+  const [texto, setTexto] = useState("");
+  const [area, setArea] = useState(AREAS[0]);
+
+  const linhas = texto
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const pessoas = linhas.map((linha) => {
+    const partes = linha.split(",").map((p) => p.trim());
+    const email = partes.find((p) => p.includes("@"));
+    const nome = partes.find((p) => !p.includes("@")) || partes[0];
+    return { nome, email: email || "" };
+  });
+
+  return (
+    <Modal titulo="Importar lista de colaboradores" onClose={onClose} largura="max-w-lg">
+      <div className="space-y-3">
+        <Campo label="Cole uma pessoa por linha — 'Nome' ou 'Nome, e-mail'">
+          <textarea
+            className={classNames(inputCls, "min-h-[140px] resize-none font-mono text-xs")}
+            placeholder={"Maria Silva, maria.silva@osklen.com.br\nJoão Pereira, joao.pereira@osklen.com.br\nAna Costa"}
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+          />
+        </Campo>
+        <Campo label="Área (aplicada a todos desta lista — ajuste depois individualmente se precisar)">
+          <select className={inputCls} value={area} onChange={(e) => setArea(e.target.value)}>
+            {AREAS.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </Campo>
+        {pessoas.length > 0 && (
+          <p className="text-[11px] text-stone-400">
+            {pessoas.length} colaborador(es) reconhecido(s): {pessoas.map((p) => p.nome).join(", ")}
+          </p>
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-100">
+            Cancelar
+          </button>
+          <button
+            disabled={pessoas.length === 0}
+            onClick={() => onImportar(pessoas.map((p) => ({ ...p, area })))}
+            className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-40"
+          >
+            Importar {pessoas.length > 0 ? `(${pessoas.length})` : ""}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ModalNovoColaborador({ onClose, onSalvar }) {
+  const [form, setForm] = useState({ nome: "", email: "", cargo: "", area: AREAS[0], dataAdmissao: new Date().toISOString().slice(0, 10) });
+
+  return (
+    <Modal titulo="Novo colaborador" onClose={onClose}>
+      <div className="space-y-3">
+        <Campo label="Nome completo">
+          <input className={inputCls} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} />
+        </Campo>
+        <Campo label="E-mail">
+          <input className={inputCls} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </Campo>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Cargo">
+            <input className={inputCls} value={form.cargo} onChange={(e) => setForm({ ...form, cargo: e.target.value })} />
+          </Campo>
+          <Campo label="Área">
+            <select className={inputCls} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })}>
+              {AREAS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </Campo>
+        </div>
+        <Campo label="Data de admissão">
+          <input type="date" className={inputCls} value={form.dataAdmissao} onChange={(e) => setForm({ ...form, dataAdmissao: e.target.value })} />
+        </Campo>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-100">
+            Cancelar
+          </button>
+          <button
+            disabled={!form.nome.trim()}
+            onClick={() => onSalvar(form)}
+            className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-40"
+          >
+            Cadastrar
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ColaboradorDrawer({
+  colaborador,
+  treinamentos,
+  treinamentoDesignacoes,
+  advertencias,
+  casos,
+  onClose,
+  onUpdate,
+  onDesignar,
+  onConcluirDesignacao,
+  onAdicionarAdvertencia,
+}) {
+  const [aba, setAba] = useState("geral");
+  const [novaAdv, setNovaAdv] = useState({ tipo: "Verbal", motivo: "", casoRelacionadoId: "" });
+
+  if (!colaborador) return null;
+
+  const designacoesDoColab = treinamentoDesignacoes.filter((d) => d.colaboradorId === colaborador.id);
+  const advsDoColab = advertencias.filter((a) => a.colaboradorId === colaborador.id);
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-stone-900/30">
+      <div className="flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-stone-200 px-5 py-4">
+          <div className="min-w-0">
+            <Tag tone="neutral">{colaborador.cargo || "Sem cargo definido"}</Tag>
+            <h3 className="mt-1.5 truncate text-sm font-semibold text-stone-900">{colaborador.nome}</h3>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex border-b border-stone-200 px-5">
+          {[
+            { chave: "geral", rotulo: "Visão Geral" },
+            { chave: "treinamentos", rotulo: "Treinamentos" },
+            { chave: "advertencias", rotulo: "Advertências" },
+          ].map((t) => (
+            <button
+              key={t.chave}
+              onClick={() => setAba(t.chave)}
+              className={classNames(
+                "border-b-2 px-3 py-2.5 text-xs font-medium",
+                aba === t.chave ? "border-stone-900 text-stone-900" : "border-transparent text-stone-400 hover:text-stone-600"
+              )}
+            >
+              {t.rotulo}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {aba === "geral" && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Cargo">
+                  <input className={inputCls} value={colaborador.cargo || ""} onChange={(e) => onUpdate(colaborador.id, { cargo: e.target.value })} />
+                </Campo>
+                <Campo label="Área">
+                  <select className={inputCls} value={colaborador.area || AREAS[0]} onChange={(e) => onUpdate(colaborador.id, { area: e.target.value })}>
+                    {AREAS.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Status">
+                  <select className={inputCls} value={colaborador.status} onChange={(e) => onUpdate(colaborador.id, { status: e.target.value })}>
+                    {STATUS_COLABORADOR.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Admissão">
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={colaborador.dataAdmissao ? colaborador.dataAdmissao.slice(0, 10) : ""}
+                    onChange={(e) => onUpdate(colaborador.id, { dataAdmissao: e.target.value || null })}
+                  />
+                </Campo>
+              </div>
+              <p className="text-xs text-stone-400">
+                E-mail: <span className="text-stone-600">{colaborador.email || "—"}</span>
+              </p>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="rounded-lg bg-stone-50 p-3 text-center">
+                  <p className="text-lg font-semibold text-stone-900">{designacoesDoColab.filter((d) => d.status === "Concluído").length}</p>
+                  <p className="text-[10px] text-stone-500">treinamentos concluídos</p>
+                </div>
+                <div className="rounded-lg bg-stone-50 p-3 text-center">
+                  <p className="text-lg font-semibold text-stone-900">{advsDoColab.length}</p>
+                  <p className="text-[10px] text-stone-500">advertências</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {aba === "treinamentos" && (
+            <div className="space-y-2.5">
+              {treinamentos.map((t) => {
+                const designacao = designacoesDoColab.find((d) => d.treinamentoId === t.id);
+                return (
+                  <div key={t.id} className="flex items-center justify-between rounded-lg border border-stone-200 px-3 py-2.5">
+                    <div>
+                      <p className="text-xs font-medium text-stone-700">{t.nome}</p>
+                      <p className="text-[11px] text-stone-400">{designacao ? designacao.status : "Não designado"}</p>
+                    </div>
+                    {!designacao && (
+                      <button onClick={() => onDesignar(colaborador.id, t.id)} className="rounded-lg border border-stone-300 px-2.5 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50">
+                        Designar
+                      </button>
+                    )}
+                    {designacao && designacao.status !== "Concluído" && (
+                      <button
+                        onClick={() => onConcluirDesignacao(designacao.id)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-stone-300 px-2.5 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50"
+                      >
+                        <Check className="h-3 w-3" /> Concluir
+                      </button>
+                    )}
+                    {designacao && designacao.status === "Concluído" && <Tag tone="green">Concluído</Tag>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {aba === "advertencias" && (
+            <div className="space-y-3">
+              {advsDoColab.length === 0 && <p className="text-xs text-stone-400">Nenhuma advertência registrada.</p>}
+              <ul className="space-y-2">
+                {advsDoColab.map((a) => (
+                  <li key={a.id} className="rounded-lg border border-stone-200 px-3 py-2.5">
+                    <div className="flex items-center justify-between">
+                      <Tag tone={a.tipo === "Verbal" ? "amber" : "red"}>{a.tipo}</Tag>
+                      <span className="text-[11px] text-stone-400">{formatarData(a.dataRegistro)}</span>
+                    </div>
+                    <p className="mt-1.5 text-xs text-stone-700">{a.motivo}</p>
+                  </li>
+                ))}
+              </ul>
+              <div className="rounded-lg bg-stone-50 p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-stone-600">
+                  <ShieldAlert className="h-3.5 w-3.5" /> Nova advertência
+                </p>
+                <div className="space-y-2">
+                  <select className={classNames(inputCls, "text-xs")} value={novaAdv.tipo} onChange={(e) => setNovaAdv({ ...novaAdv, tipo: e.target.value })}>
+                    {TIPOS_ADVERTENCIA.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                  <textarea
+                    className={classNames(inputCls, "min-h-[60px] resize-none text-xs")}
+                    placeholder="Motivo"
+                    value={novaAdv.motivo}
+                    onChange={(e) => setNovaAdv({ ...novaAdv, motivo: e.target.value })}
+                  />
+                  <select
+                    className={classNames(inputCls, "text-xs")}
+                    value={novaAdv.casoRelacionadoId}
+                    onChange={(e) => setNovaAdv({ ...novaAdv, casoRelacionadoId: e.target.value })}
+                  >
+                    <option value="">Sem caso relacionado</option>
+                    {casos.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.protocolo} — {c.categoria}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    disabled={!novaAdv.motivo.trim()}
+                    onClick={() => {
+                      onAdicionarAdvertencia(colaborador.id, novaAdv);
+                      setNovaAdv({ tipo: "Verbal", motivo: "", casoRelacionadoId: "" });
+                    }}
+                    className="w-full rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-40"
+                  >
+                    Registrar advertência
+                  </button>
+                  <p className="text-[11px] text-stone-400">
+                    O caso relacionado fica só para rastreabilidade — não aparece como exibição padrão deste perfil.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- canal de denúncias / gestão de casos ----------------------------- */
+
+function CartaoCaso({ caso, slaConfig, onClick }) {
+  const prazo = calcularPrazoCaso(caso, slaConfig);
+  const dias = diasAte(prazo);
+  const emAberto = !["Concluída", "Arquivada"].includes(caso.status);
+  return (
+    <div
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", caso.id)}
+      onClick={onClick}
+      className="cursor-pointer rounded-lg border border-stone-200 bg-white p-3 shadow-sm hover:border-stone-300 hover:shadow"
+    >
+      <div className="mb-1.5 flex items-center justify-between">
+        <Tag tone="neutral">{caso.categoria}</Tag>
+        <Dot tone={gravidadeTone(caso.gravidade)} />
+      </div>
+      <p className="text-xs font-medium text-stone-800">{caso.protocolo}</p>
+      <p className="mt-1 text-[11px] text-stone-500">{caso.canalOrigem}</p>
+      <div className="mt-2 flex items-center justify-between">
+        <Tag tone="neutral">{caso.areaRelacionada || "—"}</Tag>
+        {caso.responsavelInvestigacao ? <Avatares nomes={[caso.responsavelInvestigacao]} /> : <span className="text-[11px] text-stone-400">Sem investigador</span>}
+      </div>
+      {emAberto && dias !== null && (
+        <p className={classNames("mt-2 flex items-center gap-1 text-[11px] font-medium", dias < 0 ? "text-red-600" : dias <= 5 ? "text-amber-600" : "text-stone-400")}>
+          <AlertTriangle className="h-3 w-3" /> {dias < 0 ? `prazo vencido há ${Math.abs(dias)}d` : `prazo em ${dias}d`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ColunaKanbanCasos({ status, casos, slaConfig, onClickCaso, onDrop }) {
+  return (
+    <div
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        const id = e.dataTransfer.getData("text/plain");
+        onDrop(id, status);
+      }}
+      className="flex min-h-[180px] w-64 shrink-0 flex-col rounded-xl bg-stone-100/60 p-2"
+    >
+      <div className="mb-2 flex items-center justify-between px-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500">{status}</h3>
+        <span className="text-xs text-stone-400">{casos.length}</span>
+      </div>
+      <div className="space-y-2">
+        {casos.map((c) => (
+          <CartaoCaso key={c.id} caso={c} slaConfig={slaConfig} onClick={() => onClickCaso(c.id)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Casos({ casos, slaConfig, busca, onClickCaso, onMoveStatus, onCriarCaso }) {
+  const [filtros, setFiltros] = useState({ categoria: "", canalOrigem: "", gravidade: "" });
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
+  const [modalNovoAberto, setModalNovoAberto] = useState(false);
+
+  const filtrados = useMemo(() => {
+    return casos.filter((c) => {
+      if (busca && !`${c.protocolo} ${c.categoria}`.toLowerCase().includes(busca.toLowerCase())) return false;
+      if (filtros.categoria && c.categoria !== filtros.categoria) return false;
+      if (filtros.canalOrigem && c.canalOrigem !== filtros.canalOrigem) return false;
+      if (filtros.gravidade && c.gravidade !== filtros.gravidade) return false;
+      return true;
+    });
+  }, [casos, busca, filtros]);
+
+  const abertos = casos.filter((c) => !["Concluída", "Arquivada"].includes(c.status));
+  const dentroPrazo = abertos.filter((c) => {
+    const dias = diasAte(calcularPrazoCaso(c, slaConfig));
+    return dias === null || dias >= 0;
+  });
+  const pctSla = abertos.length ? Math.round((dentroPrazo.length / abertos.length) * 100) : null;
+
+  const concluidos = casos.filter((c) => c.status === "Concluída" && c.dataConclusao);
+  const tempoMedio = concluidos.length
+    ? Math.round(concluidos.reduce((acc, c) => acc + (new Date(c.dataConclusao) - new Date(c.dataRecebimento)) / 86400000, 0) / concluidos.length)
+    : null;
+
+  const ultimos30 = casos.filter((c) => {
+    const dias = diasAte(c.dataRecebimento);
+    return dias !== null && Math.abs(dias) <= 30;
+  }).length;
+
+  const porCanal = painelContagem(casos, "canalOrigem", CANAIS_ORIGEM);
+  const porStatusList = painelContagem(casos, "status", STATUS_CASOS);
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-900">Canal de Denúncias</h1>
+          <p className="text-xs text-stone-500">Acompanhamento caso a caso, com prazo de resposta por categoria.</p>
+        </div>
+        <button
+          onClick={() => setModalNovoAberto(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+        >
+          <Plus className="h-3.5 w-3.5" /> Registrar caso
+        </button>
+      </div>
+
+      <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-800">
+        <strong className="font-semibold">Nota de arquitetura:</strong> em produção, este módulo deveria nascer com a
+        trava de acesso ligada (Admin/Comitê GRC + responsável do caso) — a única exceção deliberada à regra de "todos
+        veem tudo" da Fase 1 (ver seção B.5 do documento de arquitetura). Neste protótipo, por ser uma demonstração
+        compartilhada, todos veem todos os casos.
+      </div>
+
+      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          label="Casos abertos"
+          valor={abertos.length}
+          sublabel={`${casos.length} no total`}
+          tone={casos.length === 0 ? "neutral" : abertos.length === 0 ? "green" : "neutral"}
+        />
+        <KpiCard
+          label="Dentro do prazo (SLA)"
+          valor={pctSla === null ? "—" : `${pctSla}%`}
+          sublabel={abertos.length ? `${dentroPrazo.length}/${abertos.length} casos abertos` : "Sem casos abertos"}
+          tone={pctSla === null ? "neutral" : pctSla >= 70 ? "green" : pctSla >= 30 ? "amber" : "red"}
+        />
+        <KpiCard
+          label="Tempo médio de resolução"
+          valor={tempoMedio === null ? "—" : `${tempoMedio}d`}
+          sublabel={concluidos.length ? `${concluidos.length} caso(s) concluído(s)` : "Nenhum caso concluído ainda"}
+          tone="neutral"
+        />
+        <KpiCard label="Casos nos últimos 30 dias" valor={ultimos30} sublabel="Volume recente" tone="neutral" />
+      </div>
+
+      <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ListaContagem titulo="Por canal de origem — como identificamos" dados={porCanal} />
+        <ListaContagem titulo="Por etapa — como estamos seguindo" dados={porStatusList} />
+      </div>
+
+      <button
+        onClick={() => setFiltrosAbertos(!filtrosAbertos)}
+        className="mb-2 flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-stone-800"
+      >
+        <ChevronDown className={classNames("h-3.5 w-3.5 transition-transform", filtrosAbertos && "rotate-180")} />
+        Filtros
+      </button>
+      {filtrosAbertos && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          <select
+            value={filtros.categoria}
+            onChange={(e) => setFiltros({ ...filtros, categoria: e.target.value })}
+            className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-600"
+          >
+            <option value="">Categoria: todas</option>
+            {CATEGORIAS_CASO.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filtros.canalOrigem}
+            onChange={(e) => setFiltros({ ...filtros, canalOrigem: e.target.value })}
+            className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-600"
+          >
+            <option value="">Canal: todos</option>
+            {CANAIS_ORIGEM.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filtros.gravidade}
+            onChange={(e) => setFiltros({ ...filtros, gravidade: e.target.value })}
+            className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-600"
+          >
+            <option value="">Gravidade: todas</option>
+            {GRAVIDADES.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {STATUS_CASOS.map((status) => (
+          <ColunaKanbanCasos
+            key={status}
+            status={status}
+            casos={filtrados.filter((c) => c.status === status)}
+            slaConfig={slaConfig}
+            onClickCaso={onClickCaso}
+            onDrop={onMoveStatus}
+          />
+        ))}
+      </div>
+
+      {casos.length === 0 && (
+        <p className="mt-4 text-center text-xs text-stone-400">
+          Nenhum caso registrado ainda. Quando o comitê começar a registrar relatos recebidos, eles aparecem aqui com
+          prazo de resposta e linha do tempo de andamento.
+        </p>
+      )}
+
+      {modalNovoAberto && (
+        <ModalNovoCaso
+          onClose={() => setModalNovoAberto(false)}
+          onSalvar={(dados) => {
+            onCriarCaso(dados);
+            setModalNovoAberto(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalNovoCaso({ onClose, onSalvar }) {
+  const [form, setForm] = useState({
+    canalOrigem: CANAIS_ORIGEM[0],
+    categoria: CATEGORIAS_CASO[0],
+    areaRelacionada: AREAS[0],
+    gravidade: "Média",
+    sigilo: true,
+    denuncianteAnonimo: true,
+    resumoInicial: "",
+  });
+
+  return (
+    <Modal titulo="Registrar caso no Canal de Denúncias" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Canal de origem">
+            <select className={inputCls} value={form.canalOrigem} onChange={(e) => setForm({ ...form, canalOrigem: e.target.value })}>
+              {CANAIS_ORIGEM.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Categoria">
+            <select className={inputCls} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
+              {CATEGORIAS_CASO.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Área relacionada">
+            <select className={inputCls} value={form.areaRelacionada} onChange={(e) => setForm({ ...form, areaRelacionada: e.target.value })}>
+              {AREAS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo label="Gravidade">
+            <select className={inputCls} value={form.gravidade} onChange={(e) => setForm({ ...form, gravidade: e.target.value })}>
+              {GRAVIDADES.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          </Campo>
+        </div>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-xs text-stone-600">
+            <input type="checkbox" checked={form.sigilo} onChange={(e) => setForm({ ...form, sigilo: e.target.checked })} /> Sigiloso
+          </label>
+          <label className="flex items-center gap-2 text-xs text-stone-600">
+            <input
+              type="checkbox"
+              checked={form.denuncianteAnonimo}
+              onChange={(e) => setForm({ ...form, denuncianteAnonimo: e.target.checked })}
+            />{" "}
+            Denunciante anônimo
+          </label>
+        </div>
+        <Campo label="Resumo inicial do relato (opcional)">
+          <textarea
+            className={classNames(inputCls, "min-h-[72px] resize-none")}
+            value={form.resumoInicial}
+            onChange={(e) => setForm({ ...form, resumoInicial: e.target.value })}
+            placeholder="Sujeito às mesmas regras de confidencialidade do caso."
+          />
+        </Campo>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-100">
+            Cancelar
+          </button>
+          <button
+            onClick={() => onSalvar(form)}
+            className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+          >
+            Registrar
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function CasoDrawer({ caso, slaConfig, documentos, onClose, onUpdate, onAndamento, onAnexar, onRemoverAnexo, onVincularDocumento, onDesvincularDocumento }) {
+  const [aba, setAba] = useState("geral");
+  const [novoAndamento, setNovoAndamento] = useState("");
+  const [novoAnexo, setNovoAnexo] = useState("");
+  const [vinculoDocId, setVinculoDocId] = useState("");
+  const [vinculoTrecho, setVinculoTrecho] = useState("");
+
+  if (!caso) return null;
+
+  const prazo = calcularPrazoCaso(caso, slaConfig);
+  const dias = diasAte(prazo);
+  const emAberto = !["Concluída", "Arquivada"].includes(caso.status);
+  const slaDias = slaConfig.find((s) => s.categoria === caso.categoria)?.prazoDias ?? 30;
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-stone-900/30">
+      <div className="flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-stone-200 px-5 py-4">
+          <div className="min-w-0">
+            <Tag tone="neutral">{caso.categoria}</Tag>
+            <h3 className="mt-1.5 truncate text-sm font-semibold text-stone-900">{caso.protocolo}</h3>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex border-b border-stone-200 px-5">
+          {[
+            { chave: "geral", rotulo: "Visão Geral" },
+            { chave: "linha", rotulo: "Linha do Tempo" },
+            { chave: "anexos", rotulo: "Anexos" },
+          ].map((t) => (
+            <button
+              key={t.chave}
+              onClick={() => setAba(t.chave)}
+              className={classNames(
+                "border-b-2 px-3 py-2.5 text-xs font-medium",
+                aba === t.chave ? "border-stone-900 text-stone-900" : "border-transparent text-stone-400 hover:text-stone-600"
+              )}
+            >
+              {t.rotulo}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {aba === "geral" && (
+            <div className="space-y-3">
+              <div
+                className={classNames(
+                  "rounded-lg px-3 py-2 text-xs",
+                  emAberto && dias !== null && dias < 0
+                    ? "bg-red-50 text-red-700"
+                    : emAberto && dias !== null && dias <= 5
+                    ? "bg-amber-50 text-amber-700"
+                    : "bg-stone-50 text-stone-600"
+                )}
+              >
+                Prazo de resposta: <strong>{formatarData(prazo)}</strong> ({caso.categoria}, {slaDias} dias)
+                {emAberto && dias !== null && (dias < 0 ? ` — vencido há ${Math.abs(dias)}d` : ` — ${dias}d restantes`)}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Status">
+                  <select className={inputCls} value={caso.status} onChange={(e) => onUpdate(caso.id, { status: e.target.value })}>
+                    {STATUS_CASOS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Gravidade">
+                  <select className={inputCls} value={caso.gravidade} onChange={(e) => onUpdate(caso.id, { gravidade: e.target.value })}>
+                    {GRAVIDADES.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <Campo label="Responsável pela investigação">
+                  <input
+                    className={inputCls}
+                    value={caso.responsavelInvestigacao || ""}
+                    onChange={(e) => onUpdate(caso.id, { responsavelInvestigacao: e.target.value || null })}
+                  />
+                </Campo>
+                <Campo label="Desfecho">
+                  <select className={inputCls} value={caso.desfecho || ""} onChange={(e) => onUpdate(caso.id, { desfecho: e.target.value || null })}>
+                    <option value="">—</option>
+                    {DESFECHOS_CASO.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+              </div>
+              {(caso.status === "Concluída" || caso.status === "Arquivada") && (
+                <Campo label="Data de conclusão">
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={caso.dataConclusao ? caso.dataConclusao.slice(0, 10) : ""}
+                    onChange={(e) => onUpdate(caso.id, { dataConclusao: e.target.value || null })}
+                  />
+                </Campo>
+              )}
+              <div className="flex gap-4 pt-1">
+                <label className="flex items-center gap-2 text-xs text-stone-600">
+                  <input type="checkbox" checked={caso.sigilo} onChange={(e) => onUpdate(caso.id, { sigilo: e.target.checked })} /> Sigiloso
+                </label>
+                <label className="flex items-center gap-2 text-xs text-stone-600">
+                  <input
+                    type="checkbox"
+                    checked={caso.denuncianteAnonimo}
+                    onChange={(e) => onUpdate(caso.id, { denuncianteAnonimo: e.target.checked })}
+                  />{" "}
+                  Denunciante anônimo
+                </label>
+              </div>
+              {caso.resumoInicial && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-stone-500">Resumo inicial</p>
+                  <p className="rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">{caso.resumoInicial}</p>
+                </div>
+              )}
+              <div>
+                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-stone-500">
+                  <Link2 className="h-3.5 w-3.5" /> Documentos/cláusulas relacionados
+                </p>
+                {caso.documentosRelacionados.length === 0 && (
+                  <p className="mb-2 text-xs text-stone-400">Nenhum documento vinculado ainda — útil para apontar exatamente qual item foi potencialmente descumprido.</p>
+                )}
+                <ul className="mb-2 space-y-1.5">
+                  {caso.documentosRelacionados.map((v) => (
+                    <li key={v.id} className="flex items-start justify-between gap-2 rounded-lg border border-stone-200 px-3 py-2 text-xs">
+                      <div>
+                        <p className="font-medium text-stone-700">{v.documentoNome}</p>
+                        {v.trecho && <p className="text-stone-400">{v.trecho}</p>}
+                      </div>
+                      <button onClick={() => onDesvincularDocumento(caso.id, v.id)} className="shrink-0 text-stone-300 hover:text-red-500">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-col gap-1.5 rounded-lg bg-stone-50 p-2">
+                  <select className={classNames(inputCls, "text-xs")} value={vinculoDocId} onChange={(e) => setVinculoDocId(e.target.value)}>
+                    <option value="">Selecionar documento da Biblioteca...</option>
+                    {documentos.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.nome}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className={classNames(inputCls, "text-xs")}
+                    placeholder="Trecho/cláusula (ex.: item 4.2 — Conflito de Interesse)"
+                    value={vinculoTrecho}
+                    onChange={(e) => setVinculoTrecho(e.target.value)}
+                  />
+                  <button
+                    onClick={() => {
+                      if (!vinculoDocId) return;
+                      onVincularDocumento(caso.id, vinculoDocId, vinculoTrecho.trim());
+                      setVinculoDocId("");
+                      setVinculoTrecho("");
+                    }}
+                    disabled={!vinculoDocId}
+                    className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-40"
+                  >
+                    Vincular
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-1 text-xs text-stone-400">
+                <p>
+                  Canal: <span className="text-stone-600">{caso.canalOrigem}</span>
+                </p>
+                <p>
+                  Área: <span className="text-stone-600">{caso.areaRelacionada}</span>
+                </p>
+                <p>
+                  Recebido em: <span className="text-stone-600">{formatarData(caso.dataRecebimento)}</span>
+                </p>
+                <p>
+                  Atualizado: <span className="text-stone-600">{tempoRelativo(caso.atualizadoEm)}</span>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {aba === "linha" && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  className={inputCls}
+                  placeholder="Registrar andamento..."
+                  value={novoAndamento}
+                  onChange={(e) => setNovoAndamento(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && novoAndamento.trim()) {
+                      onAndamento(caso.id, novoAndamento.trim());
+                      setNovoAndamento("");
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (!novoAndamento.trim()) return;
+                    onAndamento(caso.id, novoAndamento.trim());
+                    setNovoAndamento("");
+                  }}
+                  className="shrink-0 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+                >
+                  Adicionar
+                </button>
+              </div>
+              <div className="space-y-3">
+                {caso.andamentos.map((a) => (
+                  <div key={a.id} className="flex gap-2.5">
+                    <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-stone-300" />
+                    <div className="text-xs">
+                      <p className="text-stone-700">{a.descricao}</p>
+                      <p className="text-stone-400">
+                        {a.autor} · {formatarData(a.data)} {new Date(a.data).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} ·{" "}
+                        <span className="uppercase tracking-wide">{a.tipo}</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {aba === "anexos" && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input className={inputCls} placeholder="Nome do arquivo" value={novoAnexo} onChange={(e) => setNovoAnexo(e.target.value)} />
+                <button
+                  onClick={() => {
+                    if (!novoAnexo.trim()) return;
+                    onAnexar(caso.id, novoAnexo.trim());
+                    setNovoAnexo("");
+                  }}
+                  className="shrink-0 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+                >
+                  Anexar
+                </button>
+              </div>
+              {caso.anexos.length === 0 && <p className="text-xs text-stone-400">Nenhum anexo ainda.</p>}
+              <ul className="space-y-1.5">
+                {caso.anexos.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between rounded-lg border border-stone-200 px-3 py-2 text-xs">
+                    <span className="flex items-center gap-2 text-stone-700">
+                      <Paperclip className="h-3.5 w-3.5 text-stone-400" /> {a.nome}
+                    </span>
+                    <button onClick={() => onRemoverAnexo(caso.id, a.id)} className="text-stone-300 hover:text-red-500">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- admin -------------------------------- */
+
+function Admin({ featureFlags, onToggleFlag, ibgcRounds, slaConfig, onAtualizarSla, configuracoes, onAtualizarConfiguracoes, onResetar }) {
+  return (
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div>
+        <h1 className="text-lg font-semibold text-stone-900">Administração</h1>
+        <p className="text-sm text-stone-500">Controles de acesso, vocabulário do programa e dados de exemplo.</p>
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-stone-800">Headcount para KPIs de treinamento</h2>
+        <p className="mt-1 text-xs text-stone-500">
+          Total de colaboradores ativos da Osklen — usado para calcular "% concluiu / quantos faltam" no Hub de
+          Treinamentos e em Colaboradores. Ajuste manualmente até a integração com o Osklen Learning ou a folha de
+          pagamento estar disponível (ver seção D do documento de arquitetura).
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            className="w-28 rounded-lg border border-stone-300 px-3 py-1.5 text-sm"
+            value={configuracoes.totalColaboradoresAtivos}
+            onChange={(e) => onAtualizarConfiguracoes({ totalColaboradoresAtivos: Number(e.target.value) })}
+          />
+          <span className="text-xs text-stone-500">colaboradores ativos</span>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-stone-400" />
+          <h2 className="text-sm font-semibold text-stone-800">Papéis (RBAC)</h2>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {ROLES.map((r, i) => (
+            <div key={r} className="rounded-lg border border-stone-200 p-3">
+              <p className="text-xs font-semibold text-stone-800">{r}</p>
+              <p className="mt-1 text-[11px] text-stone-500">
+                {i === 0 && "Acesso administrativo total; único papel que altera os toggles abaixo."}
+                {i === 1 && "Edita e revisa itens da própria área."}
+                {i === 2 && "Consulta documentos, realiza treinamentos, confirma ciência digital."}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-stone-800">Restrição de acesso por página</h2>
+        <p className="mt-1 text-xs text-stone-500">
+          Fase 1: todos os papéis visualizam todas as páginas. Os toggles abaixo já existem na estrutura — ative quando
+          quiser começar a restringir uma página específica.
+        </p>
+        <div className="mt-4 divide-y divide-stone-100">
+          {featureFlags.map((f) => (
+            <div key={f.recurso} className="flex items-center justify-between py-2.5">
+              <span className="text-xs font-medium text-stone-700">
+                {f.modulo}
+                {f.recurso === "denuncias" && <span className="ml-2 text-[10px] font-normal text-amber-600">recomendado ligar primeiro — ver B.5</span>}
+              </span>
+              <button
+                onClick={() => onToggleFlag(f.recurso)}
+                className={classNames("relative h-5 w-9 rounded-full transition-colors", f.restricaoAtiva ? "bg-stone-900" : "bg-stone-200")}
+              >
+                <span
+                  className={classNames(
+                    "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+                    f.restricaoAtiva ? "translate-x-4" : "translate-x-0.5"
+                  )}
+                />
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-[11px] text-stone-400">
+          Este toggle demonstra a interface. Para a trava ter efeito real sobre quem vê o quê, o back-end descrito em
+          Osklen_GRC_Schema.sql precisa estar publicado e consultando esta mesma tabela (papel_permissoes +
+          feature_flags).
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-stone-800">Prazos de resposta (SLA) por categoria</h2>
+        <p className="mt-1 text-xs text-stone-500">
+          Prazos sugeridos — ajuste conforme a política interna da Osklen e a legislação aplicável. O prazo de cada
+          caso recalcula automaticamente quando o valor muda aqui.
+        </p>
+        <div className="mt-3 divide-y divide-stone-100">
+          {slaConfig.map((s) => (
+            <div key={s.categoria} className="flex items-center justify-between py-2">
+              <span className="text-xs font-medium text-stone-700">{s.categoria}</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  className="w-16 rounded-lg border border-stone-300 px-2 py-1 text-right text-xs"
+                  value={s.prazoDias}
+                  onChange={(e) => onAtualizarSla(s.categoria, Number(e.target.value))}
+                />
+                <span className="text-xs text-stone-400">dias</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-stone-800">Rodadas da Métrica IBGC registradas</h2>
+        <ul className="mt-3 space-y-1.5">
+          {ibgcRounds.map((r) => (
+            <li key={r.id} className="flex items-center justify-between text-xs">
+              <span className="text-stone-600">{formatarData(r.data)}</span>
+              <span className="font-medium text-stone-800">
+                {r.consolidado}/100 · {r.estagio}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="rounded-xl border border-red-200 bg-red-50 p-5">
+        <h2 className="text-sm font-semibold text-red-800">Restaurar dados de exemplo</h2>
+        <p className="mt-1 text-xs text-red-700">
+          Apaga tudo que foi editado neste protótipo (incluindo casos e colaboradores cadastrados) e recarrega os
+          dados de exemplo originais da Matriz de Controle e do Relatório IBGC.
+        </p>
+        <button
+          onClick={onResetar}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Restaurar dados de exemplo
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- modal rodada IBGC ------------------------------- */
+
+function ModalNovaRodada({ onClose, onSalvar }) {
+  const [form, setForm] = useState({ data: new Date().toISOString().slice(0, 10), socios: 50, conselho: 50, diretoria: 50, fiscalizacao: 50, conduta: 50 });
+  const consolidado = Math.round((Number(form.socios) + Number(form.conselho) + Number(form.diretoria) + Number(form.fiscalizacao) + Number(form.conduta)) / 5);
+
+  const campos = [
+    { chave: "socios", rotulo: "Sócios" },
+    { chave: "conselho", rotulo: "Conselho de Administração" },
+    { chave: "diretoria", rotulo: "Diretoria" },
+    { chave: "fiscalizacao", rotulo: "Órgãos de Fiscalização e Controle" },
+    { chave: "conduta", rotulo: "Conduta e Conflitos de Interesse" },
+  ];
+
+  return (
+    <Modal titulo="Registrar nova rodada da Métrica IBGC" onClose={onClose}>
+      <div className="space-y-3">
+        <Campo label="Data da avaliação">
+          <input type="date" className={inputCls} value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} />
+        </Campo>
+        {campos.map((c) => (
+          <Campo key={c.chave} label={`${c.rotulo} (0–100)`}>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className={inputCls}
+              value={form[c.chave]}
+              onChange={(e) => setForm({ ...form, [c.chave]: e.target.value })}
+            />
+          </Campo>
+        ))}
+        <div className="rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">
+          Pontuação consolidada (média simples): <span className="font-semibold text-stone-900">{consolidado}/100</span> ·{" "}
+          {estagioFromPontuacao(consolidado)}
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-100">
+            Cancelar
+          </button>
+          <button
+            onClick={() =>
+              onSalvar({
+                data: form.data,
+                socios: Number(form.socios),
+                conselho: Number(form.conselho),
+                diretoria: Number(form.diretoria),
+                fiscalizacao: Number(form.fiscalizacao),
+                conduta: Number(form.conduta),
+                consolidado,
+                estagio: estagioFromPontuacao(consolidado),
+              })
+            }
+            className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+          >
+            Salvar rodada
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------------------------------- app ---------------------------------- */
+
+function App() {
+  const [carregado, setCarregado] = useState(false);
+  const [documentos, setDocumentos] = useState([]);
+  const [auditLog, setAuditLog] = useState([]);
+  const [ibgcRounds, setIbgcRounds] = useState([]);
+  const [treinamentos, setTreinamentos] = useState([]);
+  const [treinamentoDesignacoes, setTreinamentoDesignacoes] = useState([]);
+  const [featureFlags, setFeatureFlags] = useState([]);
+  const [casos, setCasos] = useState([]);
+  const [slaConfig, setSlaConfig] = useState([]);
+  const [colaboradores, setColaboradores] = useState([]);
+  const [advertencias, setAdvertencias] = useState([]);
+  const [configuracoes, setConfiguracoes] = useState({ totalColaboradoresAtivos: 0 });
+
+  const [perfil, setPerfil] = useState({ nome: "Você", papel: "Admin/Comitê GRC" });
+  const [sidebarAberta, setSidebarAberta] = useState(true);
+  const [view, setView] = useState("dashboard");
+  const [busca, setBusca] = useState("");
+  const [docSelecionadoId, setDocSelecionadoId] = useState(null);
+  const [casoSelecionadoId, setCasoSelecionadoId] = useState(null);
+  const [colaboradorSelecionadoId, setColaboradorSelecionadoId] = useState(null);
+  const [modalRodadaAberto, setModalRodadaAberto] = useState(false);
+  const [bannerVisivel, setBannerVisivel] = useState(true);
+
+  const carregarRef = useRef(false);
+
+  useEffect(() => {
+    (async () => {
+      const [docs, log, rodadas, trein, treinDesig, flags, casosCarregados, sla, colabs, advs, config, perfilSalvo, bannerSalvo] = await Promise.all([
+        storageGet(STORAGE.documentos, true),
+        storageGet(STORAGE.auditLog, true),
+        storageGet(STORAGE.ibgcRounds, true),
+        storageGet(STORAGE.treinamentos, true),
+        storageGet(STORAGE.treinamentoDesignacoes, true),
+        storageGet(STORAGE.featureFlags, true),
+        storageGet(STORAGE.casos, true),
+        storageGet(STORAGE.slaConfig, true),
+        storageGet(STORAGE.colaboradores, true),
+        storageGet(STORAGE.advertencias, true),
+        storageGet(STORAGE.configuracoes, true),
+        storageGet("osklen-grc-perfil-v1", false),
+        storageGet("osklen-grc-banner-v1", false),
+      ]);
+
+      const docsIniciais = docs && docs.length ? docs : seedDocumentos();
+      setDocumentos(docsIniciais);
+      setAuditLog(log && log.length ? log : seedAuditLog(docsIniciais));
+      setIbgcRounds(rodadas && rodadas.length ? rodadas : seedIbgcRounds());
+      setTreinamentos(trein && trein.length ? trein : seedTreinamentos());
+      setTreinamentoDesignacoes(treinDesig || seedTreinamentoDesignacoes());
+      setFeatureFlags(flags && flags.length ? flags : seedFeatureFlags());
+      setCasos(casosCarregados || seedCasos());
+      setSlaConfig(sla && sla.length ? sla : seedSlaConfig());
+      setColaboradores(colabs || seedColaboradores());
+      setAdvertencias(advs || seedAdvertencias());
+      setConfiguracoes(config || seedConfiguracoes());
+      if (perfilSalvo) setPerfil(perfilSalvo);
+      if (bannerSalvo && bannerSalvo.dispensado) setBannerVisivel(false);
+
+      carregarRef.current = true;
+      setCarregado(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.documentos, documentos, true);
+  }, [documentos]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.auditLog, auditLog, true);
+  }, [auditLog]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.ibgcRounds, ibgcRounds, true);
+  }, [ibgcRounds]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.treinamentos, treinamentos, true);
+  }, [treinamentos]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.treinamentoDesignacoes, treinamentoDesignacoes, true);
+  }, [treinamentoDesignacoes]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.featureFlags, featureFlags, true);
+  }, [featureFlags]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.casos, casos, true);
+  }, [casos]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.slaConfig, slaConfig, true);
+  }, [slaConfig]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.colaboradores, colaboradores, true);
+  }, [colaboradores]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.advertencias, advertencias, true);
+  }, [advertencias]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet(STORAGE.configuracoes, configuracoes, true);
+  }, [configuracoes]);
+
+  useEffect(() => {
+    if (!carregarRef.current) return;
+    storageSet("osklen-grc-perfil-v1", perfil, false);
+  }, [perfil]);
+
+  function aplicarAtualizacaoDocumento(id, patch) {
+    setDocumentos((prev) => {
+      const atual = prev.find((d) => d.id === id);
+      if (!atual) return prev;
+      const novasEntradas = [];
+      Object.keys(patch).forEach((campo) => {
+        const valorAntigo = atual[campo];
+        const valorNovo = patch[campo];
+        if (JSON.stringify(valorAntigo) === JSON.stringify(valorNovo)) return;
+        novasEntradas.push({
+          id: uid("log"),
+          documentoId: id,
+          documentoNome: atual.nome,
+          campo,
+          valorAntigo,
+          valorNovo,
+          usuario: perfil.nome,
+          papel: perfil.papel,
+          timestamp: new Date().toISOString(),
+        });
+      });
+      if (novasEntradas.length) {
+        setAuditLog((prevLog) => [...novasEntradas, ...prevLog].slice(0, 200));
+      }
+      return prev.map((d) => (d.id === id ? { ...d, ...patch, atualizadoEm: new Date().toISOString() } : d));
+    });
+  }
+
+  function criarDocumento(dados) {
+    const novo = {
+      id: uid("doc"),
+      nome: dados.nome,
+      tipo: dados.tipo,
+      classificacao: dados.classificacao,
+      area: dados.area,
+      pilar: dados.pilar,
+      status: "Não iniciado",
+      prioridade: dados.prioridade,
+      risco: dados.risco,
+      versao: null,
+      dataProximaRevisao: null,
+      responsaveis: [],
+      acaoRecomendada: null,
+      observacoes: "",
+      linkDocumento: null,
+      anexos: [],
+      comentarios: [],
+      criadoEm: new Date().toISOString(),
+      atualizadoEm: new Date().toISOString(),
+    };
+    setDocumentos((prev) => [novo, ...prev]);
+    setAuditLog((prev) =>
+      [
+        {
+          id: uid("log"),
+          documentoId: novo.id,
+          documentoNome: novo.nome,
+          campo: "nome",
+          valorAntigo: null,
+          valorNovo: novo.nome,
+          usuario: perfil.nome,
+          papel: perfil.papel,
+          timestamp: new Date().toISOString(),
+        },
+        ...prev,
+      ].slice(0, 200)
+    );
+  }
+
+  function adicionarComentario(docId, texto) {
+    setDocumentos((prev) =>
+      prev.map((d) =>
+        d.id === docId
+          ? { ...d, comentarios: [...d.comentarios, { id: uid("com"), texto, autor: perfil.nome, data: new Date().toISOString() }] }
+          : d
+      )
+    );
+  }
+
+  function adicionarAnexo(docId, nome) {
+    setDocumentos((prev) =>
+      prev.map((d) =>
+        d.id === docId
+          ? { ...d, anexos: [...d.anexos, { id: uid("anx"), nome, enviadoPor: perfil.nome, data: new Date().toISOString() }] }
+          : d
+      )
+    );
+  }
+
+  function removerAnexo(docId, anexoId) {
+    setDocumentos((prev) => prev.map((d) => (d.id === docId ? { ...d, anexos: d.anexos.filter((a) => a.id !== anexoId) } : d)));
+  }
+
+  function moverStatus(docId, novoStatus) {
+    aplicarAtualizacaoDocumento(docId, { status: novoStatus });
+  }
+
+  function toggleFeatureFlag(recurso) {
+    setFeatureFlags((prev) => prev.map((f) => (f.recurso === recurso ? { ...f, restricaoAtiva: !f.restricaoAtiva } : f)));
+  }
+
+  function registrarRodadaIbgc(dados) {
+    setIbgcRounds((prev) => [...prev, { id: uid("rodada"), ...dados }]);
+    setModalRodadaAberto(false);
+  }
+
+  /* ---------- casos de integridade ---------- */
+
+  function criarCaso(dados) {
+    const protocolo = `CI-${new Date().getFullYear()}-${String(casos.length + 1).padStart(4, "0")}`;
+    const agora = new Date().toISOString();
+    const novo = {
+      id: uid("caso"),
+      protocolo,
+      canalOrigem: dados.canalOrigem,
+      categoria: dados.categoria,
+      areaRelacionada: dados.areaRelacionada,
+      gravidade: dados.gravidade,
+      sigilo: dados.sigilo,
+      denuncianteAnonimo: dados.denuncianteAnonimo,
+      resumoInicial: dados.resumoInicial || "",
+      status: "Recebida",
+      responsavelInvestigacao: null,
+      dataRecebimento: agora,
+      dataConclusao: null,
+      desfecho: null,
+      andamentos: [{ id: uid("and"), tipo: "Registro", descricao: "Caso registrado no canal.", autor: perfil.nome, data: agora }],
+      anexos: [],
+      documentosRelacionados: [],
+      criadoEm: agora,
+      atualizadoEm: agora,
+    };
+    setCasos((prev) => [novo, ...prev]);
+  }
+
+  function aplicarAtualizacaoCaso(id, patch) {
+    setCasos((prev) =>
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        const novosAndamentos = [];
+        Object.keys(patch).forEach((campo) => {
+          if (JSON.stringify(c[campo]) === JSON.stringify(patch[campo])) return;
+          novosAndamentos.push({
+            id: uid("and"),
+            tipo: "Atualização",
+            descricao: `${FIELD_LABELS_CASO[campo] || campo} alterado de "${formatarValorAuditoria(campo, c[campo])}" para "${formatarValorAuditoria(
+              campo,
+              patch[campo]
+            )}"`,
+            autor: perfil.nome,
+            data: new Date().toISOString(),
+          });
+        });
+        return {
+          ...c,
+          ...patch,
+          andamentos: [...novosAndamentos, ...c.andamentos],
+          atualizadoEm: new Date().toISOString(),
+        };
+      })
+    );
+  }
+
+  function moverStatusCaso(id, novoStatus) {
+    aplicarAtualizacaoCaso(id, { status: novoStatus });
+  }
+
+  function adicionarAndamentoCaso(id, descricao) {
+    setCasos((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, andamentos: [{ id: uid("and"), tipo: "Nota", descricao, autor: perfil.nome, data: new Date().toISOString() }, ...c.andamentos] }
+          : c
+      )
+    );
+  }
+
+  function anexarCaso(id, nome) {
+    setCasos((prev) =>
+      prev.map((c) =>
+        c.id === id ? { ...c, anexos: [...c.anexos, { id: uid("anx"), nome, enviadoPor: perfil.nome, data: new Date().toISOString() }] } : c
+      )
+    );
+  }
+
+  function removerAnexoCaso(id, anexoId) {
+    setCasos((prev) => prev.map((c) => (c.id === id ? { ...c, anexos: c.anexos.filter((a) => a.id !== anexoId) } : c)));
+  }
+
+  function vincularDocumentoCaso(casoId, documentoId, trecho) {
+    const doc = documentos.find((d) => d.id === documentoId);
+    if (!doc) return;
+    setCasos((prev) =>
+      prev.map((c) =>
+        c.id === casoId
+          ? { ...c, documentosRelacionados: [...c.documentosRelacionados, { id: uid("vinc"), documentoId, documentoNome: doc.nome, trecho }] }
+          : c
+      )
+    );
+  }
+
+  function desvincularDocumentoCaso(casoId, vinculoId) {
+    setCasos((prev) =>
+      prev.map((c) => (c.id === casoId ? { ...c, documentosRelacionados: c.documentosRelacionados.filter((v) => v.id !== vinculoId) } : c))
+    );
+  }
+
+  function atualizarSla(categoria, prazoDias) {
+    setSlaConfig((prev) => prev.map((s) => (s.categoria === categoria ? { ...s, prazoDias } : s)));
+  }
+
+  /* ---------- colaboradores, treinamentos por pessoa, advertências ---------- */
+
+  function criarColaborador(dados) {
+    const novo = {
+      id: uid("colab"),
+      nome: dados.nome,
+      email: dados.email || "",
+      cargo: dados.cargo || "",
+      area: dados.area,
+      dataAdmissao: dados.dataAdmissao || new Date().toISOString().slice(0, 10),
+      status: "Ativo",
+      criadoEm: new Date().toISOString(),
+      atualizadoEm: new Date().toISOString(),
+    };
+    setColaboradores((prev) => [novo, ...prev]);
+  }
+
+  function importarColaboradores(lista) {
+    const agora = new Date().toISOString();
+    const novos = lista.map((p) => ({
+      id: uid("colab"),
+      nome: p.nome,
+      email: p.email || "",
+      cargo: "",
+      area: p.area,
+      dataAdmissao: agora.slice(0, 10),
+      status: "Ativo",
+      criadoEm: agora,
+      atualizadoEm: agora,
+    }));
+    setColaboradores((prev) => [...novos, ...prev]);
+  }
+
+  function atualizarColaborador(id, patch) {
+    setColaboradores((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch, atualizadoEm: new Date().toISOString() } : c)));
+  }
+
+  function designarTreinamento(colaboradorId, treinamentoId) {
+    setTreinamentoDesignacoes((prev) => {
+      if (prev.some((d) => d.colaboradorId === colaboradorId && d.treinamentoId === treinamentoId)) return prev;
+      return [
+        ...prev,
+        { id: uid("desig"), colaboradorId, treinamentoId, status: "Pendente", dataDesignacao: new Date().toISOString(), dataConclusao: null },
+      ];
+    });
+  }
+
+  function concluirDesignacao(designacaoId) {
+    setTreinamentoDesignacoes((prev) =>
+      prev.map((d) => (d.id === designacaoId ? { ...d, status: "Concluído", dataConclusao: new Date().toISOString() } : d))
+    );
+  }
+
+  function adicionarAdvertencia(colaboradorId, dados) {
+    setAdvertencias((prev) => [
+      {
+        id: uid("adv"),
+        colaboradorId,
+        tipo: dados.tipo,
+        motivo: dados.motivo,
+        casoRelacionadoId: dados.casoRelacionadoId || null,
+        responsavel: perfil.nome,
+        dataRegistro: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+  }
+
+  function atualizarConfiguracoes(patch) {
+    setConfiguracoes((prev) => ({ ...prev, ...patch }));
+  }
+
+  function restaurarDadosDeExemplo() {
+    const docs = seedDocumentos();
+    setDocumentos(docs);
+    setAuditLog(seedAuditLog(docs));
+    setIbgcRounds(seedIbgcRounds());
+    setTreinamentos(seedTreinamentos());
+    setTreinamentoDesignacoes(seedTreinamentoDesignacoes());
+    setFeatureFlags(seedFeatureFlags());
+    setCasos(seedCasos());
+    setSlaConfig(seedSlaConfig());
+    setColaboradores(seedColaboradores());
+    setAdvertencias(seedAdvertencias());
+    setConfiguracoes(seedConfiguracoes());
+  }
+
+  function dispensarBanner() {
+    setBannerVisivel(false);
+    storageSet("osklen-grc-banner-v1", { dispensado: true }, false);
+  }
+
+  const docSelecionado = documentos.find((d) => d.id === docSelecionadoId) || null;
+  const auditEntriesDoc = docSelecionadoId
+    ? auditLog.filter((e) => e.documentoId === docSelecionadoId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    : [];
+
+  const casoSelecionado = casos.find((c) => c.id === casoSelecionadoId) || null;
+
+  const colaboradorSelecionado = colaboradores.find((c) => c.id === colaboradorSelecionadoId) || null;
+
+  const notificacoesDocs = documentos
+    .filter((d) => {
+      const dias = diasAte(d.dataProximaRevisao);
+      return dias !== null && dias <= 30;
+    })
+    .map((d) => ({ id: d.id, tipo: "documento", nome: d.nome, contexto: d.area, dias: diasAte(d.dataProximaRevisao) }));
+
+  const notificacoesCasos = casos
+    .filter((c) => !["Concluída", "Arquivada"].includes(c.status))
+    .map((c) => ({ id: c.id, tipo: "caso", nome: c.protocolo, contexto: c.categoria, dias: diasAte(calcularPrazoCaso(c, slaConfig)) }))
+    .filter((n) => n.dias !== null && n.dias <= 30);
+
+  const notificacoes = [...notificacoesDocs, ...notificacoesCasos].sort((a, b) => a.dias - b.dias);
+
+  function clicarNotificacao(n) {
+    if (n.tipo === "documento") {
+      setView("matriz");
+      setDocSelecionadoId(n.id);
+    } else {
+      setView("denuncias");
+      setCasoSelecionadoId(n.id);
+    }
+  }
+
+  if (!carregado) {
+    return (
+      <div className="flex h-full min-h-[400px] items-center justify-center bg-stone-50 text-sm text-stone-400">
+        Carregando plataforma...
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-full min-h-[700px] w-full overflow-hidden bg-stone-50 text-stone-900"
+      style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, sans-serif" }}
+    >
+      <Sidebar aberta={sidebarAberta} setAberta={setSidebarAberta} view={view} setView={setView} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar
+          busca={busca}
+          setBusca={setBusca}
+          view={view}
+          perfil={perfil}
+          setPerfil={setPerfil}
+          notificacoes={notificacoes}
+          onClickNotificacao={clicarNotificacao}
+        />
+        <main className="flex-1 overflow-y-auto p-6">
+          {bannerVisivel && (
+            <div className="mx-auto mb-5 flex max-w-6xl items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-xs text-stone-600">
+              <p>
+                Protótipo funcional, seeded com os dados reais da Matriz de Controle e do Relatório IBGC da Osklen. Os
+                dados ficam salvos e são <strong>compartilhados com todos que abrirem este artifact</strong>.
+              </p>
+              <button onClick={dispensarBanner} className="shrink-0 text-stone-400 hover:text-stone-700">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {view === "dashboard" && (
+            <Dashboard
+              documentos={documentos}
+              auditLog={auditLog}
+              ibgcRounds={ibgcRounds}
+              treinamentos={treinamentos}
+              treinamentoDesignacoes={treinamentoDesignacoes}
+              colaboradores={colaboradores}
+              configuracoes={configuracoes}
+              casos={casos}
+              slaConfig={slaConfig}
+              setView={setView}
+              abrirDocumento={setDocSelecionadoId}
+              abrirModalRodada={() => setModalRodadaAberto(true)}
+            />
+          )}
+          {view === "fluxos" && <Fluxos documentos={documentos} />}
+          {view === "matriz" && (
+            <Matriz
+              documentos={documentos}
+              busca={busca}
+              onClickDoc={setDocSelecionadoId}
+              onMoveStatus={moverStatus}
+              onCriarDocumento={criarDocumento}
+            />
+          )}
+          {view === "biblioteca" && <Biblioteca documentos={documentos} busca={busca} onClickDoc={setDocSelecionadoId} />}
+          {view === "colaboradores" && (
+            <Colaboradores
+              colaboradores={colaboradores}
+              treinamentoDesignacoes={treinamentoDesignacoes}
+              advertencias={advertencias}
+              treinamentos={treinamentos}
+              configuracoes={configuracoes}
+              busca={busca}
+              onClickColaborador={setColaboradorSelecionadoId}
+              onCriarColaborador={criarColaborador}
+              onImportarColaboradores={importarColaboradores}
+            />
+          )}
+          {view === "treinamentos" && (
+            <Treinamentos
+              treinamentos={treinamentos}
+              treinamentoDesignacoes={treinamentoDesignacoes}
+              colaboradores={colaboradores}
+              configuracoes={configuracoes}
+              setView={setView}
+            />
+          )}
+          {view === "denuncias" && (
+            <Casos
+              casos={casos}
+              slaConfig={slaConfig}
+              busca={busca}
+              onClickCaso={setCasoSelecionadoId}
+              onMoveStatus={moverStatusCaso}
+              onCriarCaso={criarCaso}
+            />
+          )}
+          {view === "admin" && (
+            <Admin
+              featureFlags={featureFlags}
+              onToggleFlag={toggleFeatureFlag}
+              ibgcRounds={ibgcRounds}
+              slaConfig={slaConfig}
+              onAtualizarSla={atualizarSla}
+              configuracoes={configuracoes}
+              onAtualizarConfiguracoes={atualizarConfiguracoes}
+              onResetar={restaurarDadosDeExemplo}
+            />
+          )}
+        </main>
+      </div>
+
+      {docSelecionado && (
+        <DetailDrawer
+          doc={docSelecionado}
+          auditEntries={auditEntriesDoc}
+          onClose={() => setDocSelecionadoId(null)}
+          onUpdate={aplicarAtualizacaoDocumento}
+          onComentar={adicionarComentario}
+          onAnexar={adicionarAnexo}
+          onRemoverAnexo={removerAnexo}
+        />
+      )}
+
+      {casoSelecionado && (
+        <CasoDrawer
+          caso={casoSelecionado}
+          slaConfig={slaConfig}
+          documentos={documentos}
+          onClose={() => setCasoSelecionadoId(null)}
+          onUpdate={aplicarAtualizacaoCaso}
+          onAndamento={adicionarAndamentoCaso}
+          onAnexar={anexarCaso}
+          onRemoverAnexo={removerAnexoCaso}
+          onVincularDocumento={vincularDocumentoCaso}
+          onDesvincularDocumento={desvincularDocumentoCaso}
+        />
+      )}
+
+      {colaboradorSelecionado && (
+        <ColaboradorDrawer
+          colaborador={colaboradorSelecionado}
+          treinamentos={treinamentos}
+          treinamentoDesignacoes={treinamentoDesignacoes}
+          advertencias={advertencias}
+          casos={casos}
+          onClose={() => setColaboradorSelecionadoId(null)}
+          onUpdate={atualizarColaborador}
+          onDesignar={designarTreinamento}
+          onConcluirDesignacao={concluirDesignacao}
+          onAdicionarAdvertencia={adicionarAdvertencia}
+        />
+      )}
+
+      {modalRodadaAberto && <ModalNovaRodada onClose={() => setModalRodadaAberto(false)} onSalvar={registrarRodadaIbgc} />}
+    </div>
+  );
+}
+
+export default App;
